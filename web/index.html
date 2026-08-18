@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>三仓定投计划</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=20260818-1">
 </head>
 <body>
 <div class="layout">
@@ -61,8 +61,8 @@
     </section>
   </main>
 </div>
-<script src="/static/common.js"></script>
-<script src="/static/performance-chart.js"></script>
+<script src="/static/common.js?v=20260818-1"></script>
+<script src="/static/performance-chart.js?v=20260818-1"></script>
 <script>
 const colorClass = (n) => n === null || n === undefined ? "yellow" : Number(n) >= 0 ? "green" : "red";
 let activePerformanceScope = "all";
@@ -201,7 +201,7 @@ function drawPerformanceChart(series) {
       <circle class="chart-hover-dot value-dot" r="4"></circle>
       <circle class="chart-hover-dot cost-dot" r="4"></circle>
     </g>
-    <rect class="chart-hit-area" x="${pad.left}" y="${pad.top}"
+    <rect class="chart-hit-area" x="${pad.left}" y="${pad.top}" fill="transparent"
       width="${w - pad.left - pad.right}" height="${h - pad.top - pad.bottom}"></rect>
   `;
 
