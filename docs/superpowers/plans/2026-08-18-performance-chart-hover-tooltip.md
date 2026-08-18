@@ -121,7 +121,87 @@ git commit -m "添加收益曲线悬停计算"
 
 - [ ] **Step 1: 创建真实页面交互测试并确认当前实现失败**
 
-在 `%TEMP%/three-bucket-dca-hover-qa.cjs` 创建临时 Playwright 脚本。脚本在打开页面前拦截 `/api/dashboard` 和 `/api/performance`，为四个 scope 返回相同的三点确定性曲线数据；依次点击四个页签，把鼠标移动到 SVG 中点，并断言 `#performance-tooltip` 可见且包含 `2026-08-17`、`$1,250.00`、`$1,100.00`。
+在 `%TEMP%/three-bucket-dca-hover-qa.cjs` 创建以下临时 Playwright 脚本。它拦截后端接口并使用确定性三点曲线数据，因此不依赖本地数据库或外部行情：
+
+```javascript
+const assert = require("node:assert/strict");
+const { chromium } = require("C:/Users/Administrator/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright");
+
+(async () => {
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const consoleProblems = [];
+  page.on("console", message => {
+    if (["error", "warning"].includes(message.type())) consoleProblems.push(message.text());
+  });
+
+  await page.route("**/api/dashboard*", route => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      has_errors: false,
+      errors: [],
+      monthly_plan: 0,
+      decisions: [],
+      portfolio: {
+        price_data_ok: true,
+        missing_price_assets: [],
+        total_cost: 1100,
+        total_value: 1250,
+        total_pnl: 150,
+        buckets: [],
+        assets: [],
+      },
+    }),
+  }));
+  await page.route("**/api/performance*", route => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      data_ok: true,
+      errors: [],
+      summary: { cost: 1200, value: 1300, pnl: 100, pnl_pct: 8.33 },
+      series: [
+        { date: "2026-08-16", value: 1000, cost: 900 },
+        { date: "2026-08-17", value: 1250, cost: 1100 },
+        { date: "2026-08-18", value: 1300, cost: 1200 },
+      ],
+    }),
+  }));
+
+  await page.goto("http://127.0.0.1:8020/", { waitUntil: "networkidle" });
+  assert.equal(await page.title(), "三仓定投计划");
+  const scopes = ["all", "BTC_CYCLE", "CRCL_GROWTH", "US_INDEX_CORE"];
+  for (const scope of scopes) {
+    const response = page.waitForResponse(item => {
+      const url = new URL(item.url());
+      return url.pathname === "/api/performance" && url.searchParams.get("scope") === scope;
+    });
+    await page.locator(`#performance-tabs button[data-scope="${scope}"]`).click();
+    await response;
+    const svg = page.locator("#performance-chart");
+    const bounds = await svg.boundingBox();
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+
+    const tooltip = page.locator("#performance-tooltip");
+    await tooltip.waitFor({ state: "visible" });
+    const content = await tooltip.textContent();
+    assert.match(content, /2026-08-17/);
+    assert.match(content, /组合市值 \$1,250\.00/);
+    assert.match(content, /累计投入 \$1,100\.00/);
+    assert.equal(await page.locator(".chart-hover").getAttribute("hidden"), null);
+
+    await page.mouse.move(bounds.x - 2, bounds.y + bounds.height / 2);
+    await tooltip.waitFor({ state: "hidden" });
+  }
+
+  assert.deepEqual(consoleProblems, []);
+  await page.screenshot({ path: `${process.env.TEMP}/three-bucket-dca-hover.png`, fullPage: false });
+  await browser.close();
+  console.log("PASS: 四个收益曲线页签的悬停提示均正常");
+})().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
+```
 
 Run:
 
