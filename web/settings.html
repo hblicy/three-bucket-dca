@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>设置 - 三仓定投计划</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand">三仓定投计划</div>
+    <div class="module">DCA Tracker</div>
+    <nav>
+      <a href="/">总览</a>
+      <a href="/transactions">交易记录</a>
+      <a class="active" href="/settings">设置</a>
+      <a href="/rules">规则说明</a>
+    </nav>
+  </aside>
+  <main>
+    <header>
+      <div>
+        <h1>设置</h1>
+        <p>当前配置、迁移状态、缓存更新时间和系统信息。历史迁移已移动到命令行维护脚本。</p>
+      </div>
+      <button onclick="load()">刷新</button>
+    </header>
+
+    <section class="grid" id="setting-summary"></section>
+
+    <section class="panel">
+      <h2>迁移状态</h2>
+      <div class="table-wrap"><table><thead><tr><th>来源</th><th>最后迁移时间</th><th>行数</th></tr></thead><tbody id="migration-rows"></tbody></table></div>
+    </section>
+
+    <section class="panel">
+      <h2>缓存状态</h2>
+      <div class="table-wrap"><table><thead><tr><th>缓存键</th><th>更新时间</th></tr></thead><tbody id="cache-rows"></tbody></table></div>
+    </section>
+
+    <section class="panel">
+      <h2>仓位映射</h2>
+      <div class="table-wrap"><table><thead><tr><th>代码</th><th>名称</th></tr></thead><tbody id="bucket-rows"></tbody></table></div>
+    </section>
+  </main>
+</div>
+<script src="/static/common.js"></script>
+<script>
+async function load(){
+  const data = await api("/api/settings");
+  $("setting-summary").innerHTML = `
+    <div class="card"><div class="name">写操作 Token</div><strong class="${data.write_token_configured ? "green" : "red"}">${data.write_token_configured ? "已配置" : "未配置"}</strong></div>
+    <div class="card"><div class="name">FRED API</div><strong class="${data.fred_configured ? "green" : "yellow"}">${data.fred_configured ? "已配置" : "未配置"}</strong></div>
+    <div class="card"><div class="name">企业微信</div><strong class="${data.wework_configured ? "green" : "yellow"}">${data.wework_configured ? "已配置" : "未配置"}</strong></div>
+    <div class="card"><div class="name">数据库</div><strong>${text(data.db_path)}</strong></div>
+  `;
+  $("migration-rows").innerHTML = data.migration_state.length ? data.migration_state.map(x => `
+    <tr><td data-label="来源">${text(x.source)}</td><td data-label="最后迁移时间">${text(x.migrated_at)}</td><td data-label="行数">${x.row_count}</td></tr>
+  `).join("") : `<tr><td colspan="3" class="muted">暂无迁移记录</td></tr>`;
+  $("cache-rows").innerHTML = data.cache_state.length ? data.cache_state.map(x => `
+    <tr><td data-label="缓存键">${text(x.cache_key)}</td><td data-label="更新时间">${text(x.updated_at)}</td></tr>
+  `).join("") : `<tr><td colspan="2" class="muted">暂无缓存</td></tr>`;
+  $("bucket-rows").innerHTML = Object.entries(data.buckets).map(([k,v]) => `
+    <tr><td data-label="代码">${text(k)}</td><td data-label="名称">${text(v)}</td></tr>
+  `).join("");
+}
+load().catch(err=>alert(err.message));
+</script>
+</body>
+</html>

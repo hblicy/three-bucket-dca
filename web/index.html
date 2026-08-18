@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>三仓定投计划</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand">三仓定投计划</div>
+    <div class="module">DCA Tracker</div>
+    <nav>
+      <a class="active" href="/">总览</a>
+      <a href="/transactions">交易记录</a>
+      <a href="/settings">设置</a>
+      <a href="/rules">规则说明</a>
+    </nav>
+  </aside>
+  <main>
+    <header>
+      <div><h1>三仓定投计划</h1><p>BTC、CRCL、QQQM + VOO 的统一定投驾驶舱。</p></div>
+      <button onclick="load(true)">刷新</button>
+    </header>
+    <section class="panel warning" id="errors" hidden></section>
+    <section class="grid" id="summary"></section>
+    <section class="grid" id="decisions"></section>
+    <section class="panel">
+      <h2>仓位统计</h2>
+      <div class="table-wrap"><table><thead><tr><th>仓位</th><th>投入</th><th>市值</th><th>盈亏</th><th>收益率</th></tr></thead><tbody id="buckets"></tbody></table></div>
+    </section>
+    <section class="panel">
+      <h2>资产明细</h2>
+      <div class="table-wrap"><table><thead><tr><th>资产</th><th>份额</th><th>成本</th><th>均价</th><th>现价</th><th>市值</th><th>盈亏</th></tr></thead><tbody id="assets"></tbody></table></div>
+    </section>
+    <section class="panel performance">
+      <div class="section-head">
+        <div>
+          <h2>收益曲线</h2>
+          <p>绿色为组合市值，红色虚线为累计投入。</p>
+        </div>
+        <div class="tabs" id="performance-tabs">
+          <button class="active" data-scope="all">总组合</button>
+          <button data-scope="BTC_CYCLE">BTC</button>
+          <button data-scope="CRCL_GROWTH">CRCL</button>
+          <button data-scope="US_INDEX_CORE">QQQM+VOO</button>
+        </div>
+      </div>
+      <div class="perf-stats" id="performance-summary"></div>
+      <div class="performance-warning" id="performance-warning" hidden></div>
+      <div class="chart-wrap">
+        <svg id="performance-chart" viewBox="0 0 960 360" preserveAspectRatio="none"></svg>
+        <div class="chart-empty" id="performance-empty" hidden>暂无曲线数据</div>
+      </div>
+      <div class="chart-legend">
+        <span><i class="legend-line green-line"></i>组合市值</span>
+        <span><i class="legend-line red-dash"></i>累计投入</span>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/static/common.js"></script>
+<script>
+const colorClass = (n) => n === null || n === undefined ? "yellow" : Number(n) >= 0 ? "green" : "red";
+let activePerformanceScope = "all";
+
+async function load(refresh = false) {
+  const data = await api(`/api/dashboard${refresh ? "?refresh=true" : ""}`);
+  $("errors").hidden = !data.has_errors;
+  $("errors").innerHTML = data.has_errors ? `<h2>数据获取异常</h2><p>${text(data.errors.map(e => `${e.asset}: ${e.message}`).join("；"))}</p>` : "";
+  const priceWarning = data.portfolio.price_data_ok ? "" : `<div class="card"><div class="name">缺失价格</div><strong class="yellow">${text(data.portfolio.missing_price_assets.join(", "))}</strong></div>`;
+  $("summary").innerHTML = `
+    <div class="card"><div class="name">累计投入</div><strong>${money(data.portfolio.total_cost)}</strong></div>
+    <div class="card"><div class="name">当前市值</div><strong>${money(data.portfolio.total_value)}</strong></div>
+    <div class="card"><div class="name">浮盈浮亏</div><strong class="${colorClass(data.portfolio.total_pnl)}">${money(data.portfolio.total_pnl)}</strong></div>
+    <div class="card"><div class="name">本次建议投入</div><strong>${money(data.monthly_plan)}</strong></div>
+    ${priceWarning}
+  `;
+  $("decisions").innerHTML = data.decisions.map(d => `
+    <div class="panel decision">
+      <h2>${text(d.title)}</h2>
+      <span class="tag ${text(d.status)}">${text(d.action)}</span>
+      <div class="muted">价格：${money(d.price)}</div>
+      <div>建议金额：<strong>${money(d.recommended_amount)}</strong></div>
+      <div class="muted">${text(d.reason)}</div>
+      <div class="muted">${text(d.next_window)}</div>
+    </div>
+  `).join("");
+  $("buckets").innerHTML = data.portfolio.buckets.map(x => `
+    <tr><td data-label="仓位">${text(x.bucket_name)}</td><td data-label="投入">${money(x.cost)}</td><td data-label="市值">${money(x.value)}</td><td data-label="盈亏" class="${colorClass(x.pnl)}">${money(x.pnl)}</td><td data-label="收益率">${pct(x.pnl_pct)}</td></tr>
+  `).join("");
+  $("assets").innerHTML = data.portfolio.assets.map(x => `
+    <tr><td data-label="资产">${text(x.asset)}</td><td data-label="份额">${fmt(x.shares, 6)}</td><td data-label="成本">${money(x.cost)}</td><td data-label="均价">${money(x.avg_cost)}</td><td data-label="现价">${money(x.price)}</td><td data-label="市值">${money(x.value)}</td><td data-label="盈亏" class="${colorClass(x.pnl)}">${money(x.pnl)}</td></tr>
+  `).join("");
+  await loadPerformance(activePerformanceScope);
+}
+
+async function loadPerformance(scope) {
+  activePerformanceScope = scope;
+  document.querySelectorAll("#performance-tabs button").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.scope === scope);
+  });
+  const data = await api(`/api/performance?scope=${encodeURIComponent(scope)}`);
+  const perfErrors = data.errors || [];
+  $("performance-warning").hidden = data.data_ok !== false;
+  $("performance-warning").textContent = data.data_ok === false
+    ? `收益曲线数据不完整：${perfErrors.map(e => `${e.asset}: ${e.message}`).join("；") || "未知错误"}`
+    : "";
+  $("performance-summary").innerHTML = `
+    <div><span>累计投入</span><strong>${money(data.summary.cost)}</strong></div>
+    <div><span>当前市值</span><strong>${money(data.summary.value)}</strong></div>
+    <div><span>浮盈浮亏</span><strong class="${colorClass(data.summary.pnl)}">${money(data.summary.pnl)}</strong></div>
+    <div><span>收益率</span><strong class="${colorClass(data.summary.pnl_pct)}">${pct(data.summary.pnl_pct)}</strong></div>
+  `;
+  drawPerformanceChart(data.series || []);
+}
+
+function drawPerformanceChart(series) {
+  const svg = $("performance-chart");
+  svg.innerHTML = "";
+  const points = series.filter(p => p.value !== null && p.cost !== null);
+  $("performance-empty").hidden = points.length > 1;
+  if (points.length <= 1) return;
+
+  const w = 960, h = 360, pad = { left: 62, right: 28, top: 22, bottom: 46 };
+  const values = points.flatMap(p => [Number(p.value), Number(p.cost)]).filter(Number.isFinite);
+  const minY = Math.min(0, Math.min(...values));
+  const maxY = Math.max(...values);
+  const spanY = Math.max(1, (maxY - minY) * 1.08);
+  const topY = minY + spanY;
+  const x = (i) => pad.left + (i / Math.max(1, points.length - 1)) * (w - pad.left - pad.right);
+  const y = (v) => h - pad.bottom - ((v - minY) / (topY - minY)) * (h - pad.top - pad.bottom);
+  const coords = (key) => points.map((p, i) => [x(i), y(Number(p[key]))]);
+  const smoothPath = (items) => {
+    if (items.length < 2) return "";
+    let d = `M${items[0][0].toFixed(1)},${items[0][1].toFixed(1)}`;
+    for (let i = 0; i < items.length - 1; i++) {
+      const p0 = items[Math.max(0, i - 1)];
+      const p1 = items[i];
+      const p2 = items[i + 1];
+      const p3 = items[Math.min(items.length - 1, i + 2)];
+      const cp1x = p1[0] + (p2[0] - p0[0]) / 6;
+      const cp1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const cp2x = p2[0] - (p3[0] - p1[0]) / 6;
+      const cp2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += ` C${cp1x.toFixed(1)},${cp1y.toFixed(1)} ${cp2x.toFixed(1)},${cp2y.toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+    }
+    return d;
+  };
+  const areaPath = (items) => {
+    const base = y(0);
+    return `${smoothPath(items)} L${items[items.length - 1][0].toFixed(1)},${base.toFixed(1)} L${items[0][0].toFixed(1)},${base.toFixed(1)} Z`;
+  };
+  const valueCoords = coords("value");
+  const costCoords = coords("cost");
+  const grid = [];
+  for (let i = 0; i <= 4; i++) {
+    const gy = pad.top + i * (h - pad.top - pad.bottom) / 4;
+    const val = topY - i * (topY - minY) / 4;
+    grid.push(`<line x1="${pad.left}" x2="${w - pad.right}" y1="${gy}" y2="${gy}" class="grid-line"></line>`);
+    grid.push(`<text x="10" y="${gy + 4}" class="axis-label">${money(val)}</text>`);
+  }
+  const xGrid = [];
+  const tickCount = Math.min(8, Math.max(2, Math.floor(points.length / 18)));
+  for (let i = 0; i <= tickCount; i++) {
+    const idx = Math.round(i * (points.length - 1) / tickCount);
+    const tx = x(idx);
+    xGrid.push(`<line x1="${tx}" x2="${tx}" y1="${pad.top}" y2="${h - pad.bottom}" class="grid-line vertical"></line>`);
+    xGrid.push(`<text x="${tx - 16}" y="${h - 14}" class="axis-label">${points[idx].date.slice(5)}</text>`);
+  }
+  const first = points[0].date.slice(5);
+  const last = points[points.length - 1].date.slice(5);
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="valueFill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#35d07f" stop-opacity="0.24"></stop>
+        <stop offset="72%" stop-color="#35d07f" stop-opacity="0.08"></stop>
+        <stop offset="100%" stop-color="#35d07f" stop-opacity="0"></stop>
+      </linearGradient>
+      <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+        <feGaussianBlur stdDeviation="2.4" result="blur"></feGaussianBlur>
+        <feMerge><feMergeNode in="blur"></feMergeNode><feMergeNode in="SourceGraphic"></feMergeNode></feMerge>
+      </filter>
+    </defs>
+    ${grid.join("")}
+    ${xGrid.join("")}
+    <line x1="${pad.left}" x2="${w - pad.right}" y1="${y(0)}" y2="${y(0)}" class="axis-zero"></line>
+    <path d="${areaPath(valueCoords)}" class="value-area"></path>
+    <path d="${smoothPath(costCoords)}" class="cost-line"></path>
+    <path d="${smoothPath(valueCoords)}" class="value-line" filter="url(#softGlow)"></path>
+    <circle cx="${x(points.length - 1)}" cy="${y(Number(points[points.length - 1].value))}" r="4" class="last-dot"></circle>
+    <text x="${pad.left}" y="${h - 28}" class="axis-label endpoint">${first}</text>
+    <text x="${w - pad.right - 42}" y="${h - 28}" class="axis-label endpoint">${last}</text>
+  `;
+}
+
+$("performance-tabs").addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-scope]");
+  if (btn) loadPerformance(btn.dataset.scope).catch(err => alert(err.message));
+});
+
+load().catch(err => alert(err.message));
+</script>
+</body>
+</html>

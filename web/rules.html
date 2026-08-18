@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>规则说明 - 三仓定投计划</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand">三仓定投计划</div>
+    <div class="module">DCA Tracker</div>
+    <nav>
+      <a href="/">总览</a>
+      <a href="/transactions">交易记录</a>
+      <a href="/settings">设置</a>
+      <a class="active" href="/rules">规则说明</a>
+    </nav>
+  </aside>
+  <main>
+    <header>
+      <div>
+        <h1>规则说明</h1>
+        <p>三仓定投计划的资金节奏、信号来源、执行时间和暂停条件。</p>
+      </div>
+    </header>
+
+    <section class="rule-hero">
+      <div>
+        <div class="eyebrow">Portfolio Policy</div>
+        <h2>三仓分工</h2>
+        <p>BTC 负责周期进攻，CRCL 负责加密金融成长，美股指数负责长期底仓。系统只给出定投提醒和记录，不自动下单。</p>
+      </div>
+      <div class="rule-pills">
+        <span>BTC 周期进攻</span>
+        <span>CRCL 成长仓</span>
+        <span>QQQM + VOO 底仓</span>
+      </div>
+    </section>
+
+    <section class="rule-card">
+      <div class="rule-title">
+        <div>
+          <h2>BTC：周期进攻仓</h2>
+          <p>目标是在 BTC 估值低位时提高投入，在估值升高时降低或暂停投入。</p>
+        </div>
+        <span class="tag buy">每周一 16:00</span>
+      </div>
+
+      <div class="rule-grid">
+        <div class="rule-block">
+          <h3>核心指标</h3>
+          <p>BTC 使用 DCA Score 作为统一估值分数。分数越低，代表相对越便宜，建议投入倍数越高。</p>
+          <ul>
+            <li>Proxy MVRV Z：使用 200 周均线偏离衡量周期位置。</li>
+            <li>AHR999：结合 200 日成本和指数增长模型判断估值。</li>
+            <li>Puell Multiple：观察矿工收入相对 365 日均值的位置。</li>
+          </ul>
+        </div>
+        <div class="rule-block">
+          <h3>倍数规则</h3>
+          <table class="rule-table">
+            <thead><tr><th>DCA Score 区间</th><th>动作</th><th>倍数</th></tr></thead>
+            <tbody>
+              <tr><td id="btc-rule-p10">≤ P10</td><td>重仓定投</td><td>4x</td></tr>
+              <tr><td id="btc-rule-p10-p25">P10 - P25</td><td>加速定投</td><td>2x</td></tr>
+              <tr><td id="btc-rule-p25-p50">P25 - P50</td><td>正常定投</td><td>1x</td></tr>
+              <tr><td id="btc-rule-p50-p75">P50 - P75</td><td>轻仓定投</td><td>0.5x</td></tr>
+              <tr><td id="btc-rule-p75">&gt; P75</td><td>暂停观察</td><td>0x</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="rule-note">
+        当前基础金额由 <code>BTC_BASE_AMOUNT</code> 控制，默认 $100。比如 DCA Score 在 P10-P25 区间，则提醒 2x，也就是 $200。
+      </div>
+    </section>
+
+    <section class="rule-card">
+      <div class="rule-title">
+        <div>
+          <h2>CRCL：加密金融成长仓</h2>
+          <p>目标是在 CRCL 相对低位或回撤期加大投入，在价格偏热时降低投入。</p>
+        </div>
+        <span class="tag buy">每周二 16:00</span>
+      </div>
+
+      <div class="rule-grid three">
+        <div class="rule-block metric">
+          <strong>价格历史分位</strong>
+          <p>比较当前价格在近一年历史价格中的位置。分位越低越有利。</p>
+          <span>40% 权重</span>
+        </div>
+        <div class="rule-block metric">
+          <strong>MA60 均线偏离</strong>
+          <p>观察当前价格相对 60 日均线的偏离。价格越接近低吸区，分数越友好。</p>
+          <span>25% 权重</span>
+        </div>
+        <div class="rule-block metric">
+          <strong>90 日最大回撤</strong>
+          <p>观察相对近 90 日高点的回撤。回撤越深，越可能进入分批吸收区。</p>
+          <span>20% 权重</span>
+        </div>
+      </div>
+
+      <div class="rule-block fundamentals-live">
+        <div class="fund-head">
+          <div>
+            <h3>基本面预估 <span class="muted">15% 权重</span> → <span id="fund-score" class="green">--/15</span></h3>
+            <p id="fund-note">正在读取实时 API 数据...</p>
+          </div>
+          <span class="tag buy" id="fund-live-tag">实时 API 数据</span>
+        </div>
+        <div class="fund-grid" id="fund-grid">
+          <div class="fund-item"><span>规模｜流通月增长</span><strong>--</strong><small>&gt;3%</small></div>
+          <div class="fund-item"><span>盈利｜储备收益率</span><strong>--</strong><small>&gt;4.5%</small></div>
+          <div class="fund-item"><span>份额｜USDC 市占</span><strong>--</strong><small>&gt;22%</small></div>
+          <div class="fund-item"><span>宏观｜Fed 利率路径</span><strong>--</strong><small>中高位</small></div>
+          <div class="fund-item wide"><span>风险｜流通量/脱锚异常</span><strong>--</strong><small>日超 -5% 熔断</small></div>
+        </div>
+      </div>
+
+      <div class="rule-grid">
+        <div class="rule-block">
+          <h3>基本面评分口径</h3>
+          <p>这部分和原 CRCL DCA 的实时数据口径对齐。系统读取 DefiLlama 的稳定币数据，并在配置 <code>FRED_API_KEY</code> 时读取 FRED 利率数据；未配置或读取失败时，利率分项按保守口径不加分。</p>
+          <ul>
+            <li>USDC 流通量月增长：最高 4 分，增长 &gt;3% 记满分。</li>
+            <li>储备收益率：最高 4 分，短债利率 &gt;4.5% 记满分。</li>
+            <li>USDC 市占：最高 3 分，市占 &gt;22% 记满分。</li>
+            <li>宏观利率：最高 4 分，高利率环境对储备收益更有利。</li>
+            <li>风险熔断：若 24 小时流通量异常下跌超过 5%，基本面分直接归零。</li>
+          </ul>
+        </div>
+        <div class="rule-block">
+          <h3>执行规则</h3>
+          <table class="rule-table">
+            <thead><tr><th>CRCL Score</th><th>动作</th><th>倍数</th></tr></thead>
+            <tbody>
+              <tr><td>≤ 25</td><td>强提醒加速</td><td>2x</td></tr>
+              <tr><td>25 - 45</td><td>正常定投</td><td>1x</td></tr>
+              <tr><td>45 - 65</td><td>减量定投</td><td>0.5x</td></tr>
+              <tr><td>&gt; 65</td><td>暂停定投</td><td>0x</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="rule-note">
+        当前基础金额由 <code>CRCL_BASE_AMOUNT</code> 控制，默认 $100。CRCL 波动大，提醒只代表定投节奏，不代表一次性追涨。
+      </div>
+    </section>
+
+    <section class="rule-card">
+      <div class="rule-title">
+        <div>
+          <h2>QQQM + VOO：美股长期底仓 + 估值分层定投</h2>
+          <p>目标是长期积累美股指数仓位，同时在估值偏高时降低买入速度，在估值便宜时提高买入力度。</p>
+        </div>
+        <span class="tag buy">月末信号 + 次交易日 16:00</span>
+      </div>
+
+      <div class="rule-grid">
+        <div class="rule-block">
+          <h3>轮换与金额规则</h3>
+          <ul>
+            <li>每月总投入基准为 <code>US_INDEX_MONTHLY_AMOUNT</code>，默认 $500。</li>
+            <li>奇数月买 VOO，偶数月买 QQQM。</li>
+            <li>VOO 作为宽基核心，默认按 1x 固定金额买入。</li>
+            <li>QQQM 按纳指 PE 调整金额；跌破 10 个月均线时买入系数降一级。</li>
+            <li>未买入资金进入现金/短债池，等待估值回落时使用。</li>
+            <li>老仓默认不卖出，降低交易频率和择时压力。</li>
+          </ul>
+        </div>
+        <div class="rule-block">
+          <h3>QQQM 分层规则</h3>
+          <table class="rule-table">
+            <thead><tr><th>纳指 PE</th><th>10月均线上</th><th>跌破10月均线</th></tr></thead>
+            <tbody>
+              <tr><td>PE ≥ 35</td><td>0.5x</td><td>0.25x</td></tr>
+              <tr><td>25 &lt; PE &lt; 35</td><td>1x</td><td>0.5x</td></tr>
+              <tr><td>PE ≤ 25</td><td>2x</td><td>1x</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="rule-note">
+        系统在月末美股收盘后计算 QQQM/VOO 信号，并在下一个美股交易日 16:00 北京时间推送。这个规则只调整新投入金额，不主动卖出老仓。
+      </div>
+    </section>
+
+    <section class="rule-card compact">
+      <h2>统一提醒与记录规则</h2>
+      <div class="rule-grid three">
+        <div class="rule-block">
+          <h3>提醒渠道</h3>
+          <p>全部使用企业微信机器人推送。系统会用数据库唯一记录避免同一天重复推送。</p>
+        </div>
+        <div class="rule-block">
+          <h3>数据更新</h3>
+          <p>VPS 上由 systemd timer 每 5 分钟运行一次更新脚本，刷新行情、决策和收益曲线缓存。</p>
+        </div>
+        <div class="rule-block">
+          <h3>人工确认</h3>
+          <p>系统只负责提醒和记录，最终是否买入、买多少、在哪个账户下单，仍由人工确认。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/static/common.js"></script>
+<script>
+function renderBtcThresholds(data) {
+  const btc = (data.decisions || []).find(item => item.asset === "BTC");
+  const metricThresholds = btc?.metrics?.thresholds || {};
+  const reasonThresholds = parseBtcThresholds(btc?.reason);
+  const thresholdNumber = (value) => value === null || value === undefined ? NaN : Number(value);
+  const p10 = thresholdNumber(metricThresholds.p10 ?? reasonThresholds.p10);
+  const p25 = thresholdNumber(metricThresholds.p25 ?? reasonThresholds.p25);
+  const p50 = thresholdNumber(metricThresholds.p50 ?? reasonThresholds.p50);
+  const p75 = thresholdNumber(metricThresholds.p75 ?? reasonThresholds.p75);
+  if (![p10, p25, p50, p75].every(Number.isFinite)) return;
+
+  const rows = [
+    ["btc-rule-p10", "≤ P10", `≤ ${fmt(p10, 1)}`],
+    ["btc-rule-p10-p25", "P10 - P25", `${fmt(p10, 1)} - ${fmt(p25, 1)}`],
+    ["btc-rule-p25-p50", "P25 - P50", `${fmt(p25, 1)} - ${fmt(p50, 1)}`],
+    ["btc-rule-p50-p75", "P50 - P75", `${fmt(p50, 1)} - ${fmt(p75, 1)}`],
+    ["btc-rule-p75", "> P75", `> ${fmt(p75, 1)}`],
+  ];
+  rows.forEach(([id, label, value]) => {
+    $(id).innerHTML = `
+      <span class="score-range-label">${text(label)}</span>
+      <span class="threshold-separator">｜</span>
+      <span class="threshold-value">${text(value)}</span>
+    `;
+  });
+}
+
+function parseBtcThresholds(reason) {
+  const match = String(reason || "").match(/P10\/P25\/P50\/P75=([0-9.]+)\/([0-9.]+)\/([0-9.]+)\/([0-9.]+)/);
+  if (!match) return {};
+  return {
+    p10: Number(match[1]),
+    p25: Number(match[2]),
+    p50: Number(match[3]),
+    p75: Number(match[4]),
+  };
+}
+
+function renderFundamentals(data) {
+  const crcl = (data.decisions || []).find(item => item.asset === "CRCL");
+  const metrics = crcl?.metrics || {};
+  const fundamentals = metrics.fundamentals || {};
+  const score = Number(metrics.fund_score ?? fundamentals.score);
+  $("fund-score").textContent = Number.isFinite(score) ? `${fmt(score, 1)}/15` : "--/15";
+  $("fund-note").textContent = fundamentals.note || "当前没有基本面明细，可能是缓存尚未刷新。";
+  $("fund-live-tag").textContent = fundamentals.live ? "实时 API 数据" : "兜底数据";
+  $("fund-live-tag").className = fundamentals.live ? "tag buy" : "tag wait";
+
+  const rows = [
+    ["规模｜流通月增长", fundamentals.scale_str, ">3%"],
+    ["盈利｜储备收益率", fundamentals.profit_str, ">4.5%"],
+    ["份额｜USDC 市占", fundamentals.share_str, ">22%"],
+    ["宏观｜Fed 利率路径", fundamentals.macro_str, "中高位"],
+    ["风险｜流通量/脱锚异常", fundamentals.risk_str, "日超 -5% 熔断"],
+  ];
+  $("fund-grid").innerHTML = rows.map((row, idx) => `
+    <div class="fund-item ${idx === 4 ? "wide" : ""}">
+      <span>${row[0]}</span>
+      <strong>${row[1] || "--"}</strong>
+      <small>${row[2]}</small>
+    </div>
+  `).join("");
+}
+
+api("/api/dashboard").then(data => {
+  renderBtcThresholds(data);
+  renderFundamentals(data);
+}).catch(() => {
+  $("fund-note").textContent = "基本面数据读取失败，请稍后刷新。";
+  $("fund-live-tag").textContent = "读取失败";
+  $("fund-live-tag").className = "tag error";
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+[Unit]
+Description=DCA Tracker - three-bucket-dca
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=indexpulse
+Group=indexpulse
+EnvironmentFile=/etc/three-bucket-dca.env
+WorkingDirectory=/opt/three-bucket-dca
+ExecStart=/opt/three-bucket-dca/.venv/bin/python -m uvicorn app:app --host ${DCA_HOST} --port ${DCA_PORT}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

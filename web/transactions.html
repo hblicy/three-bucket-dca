@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>交易记录 - 三仓定投计划</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="brand">三仓定投计划</div>
+    <div class="module">DCA Tracker</div>
+    <nav>
+      <a href="/">总览</a>
+      <a class="active" href="/transactions">交易记录</a>
+      <a href="/settings">设置</a>
+      <a href="/rules">规则说明</a>
+    </nav>
+  </aside>
+  <main>
+    <header>
+      <div><h1>交易记录</h1><p>只保留 BTC、CRCL、QQQM、VOO；新增、编辑、删除需要写操作 token。</p></div>
+      <button onclick="load()">刷新</button>
+    </header>
+
+    <section class="panel"><h2 id="form-title">新增交易</h2><form id="tx-form">
+      <input type="hidden" id="tx-id">
+      <input id="date" type="date" required>
+      <select id="bucket"><option value="BTC_CYCLE">BTC 周期进攻仓</option><option value="CRCL_GROWTH">CRCL 加密金融成长仓</option><option value="US_INDEX_CORE">QQQM + VOO 美股长期底仓</option></select>
+      <select id="asset" required></select>
+      <select id="side"><option value="buy">buy</option><option value="sell">sell</option></select>
+      <input id="amount" type="number" step="0.01" placeholder="金额 USD">
+      <input id="price" type="number" step="0.0001" placeholder="价格">
+      <input id="shares" type="number" step="0.00000001" placeholder="份额">
+      <textarea id="note" placeholder="备注"></textarea>
+      <div class="actions"><button id="save-btn" type="submit">保存</button><button type="button" onclick="resetForm()">清空</button></div>
+      <p id="form-status" class="muted"></p>
+    </form></section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div><h2>历史记录</h2><p id="record-count">加载中...</p></div>
+      </div>
+      <div class="filters">
+        <input id="filter-q" placeholder="搜索资产 / 仓位 / 备注">
+        <select id="filter-asset">
+          <option value="">全部资产</option>
+          <option value="BTC">BTC</option>
+          <option value="CRCL">CRCL</option>
+          <option value="QQQM">QQQM</option>
+          <option value="VOO">VOO</option>
+        </select>
+        <select id="filter-bucket">
+          <option value="">全部仓位</option>
+          <option value="BTC_CYCLE">BTC 周期进攻仓</option>
+          <option value="CRCL_GROWTH">CRCL 加密金融成长仓</option>
+          <option value="US_INDEX_CORE">QQQM + VOO 美股长期底仓</option>
+        </select>
+        <select id="filter-side">
+          <option value="">全部方向</option>
+          <option value="buy">buy</option>
+          <option value="sell">sell</option>
+        </select>
+        <input id="filter-from" type="date">
+        <input id="filter-to" type="date">
+        <button type="button" onclick="applyFilters()">筛选</button>
+        <button type="button" onclick="resetFilters()">重置</button>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>日期</th><th>仓位</th><th>资产</th><th>方向</th><th>金额</th><th>价格</th><th>份额</th><th>备注</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table></div>
+      <div class="pagination">
+        <button id="prev-page" type="button" onclick="prevPage()">上一页</button>
+        <span id="page-info">第 1 页</span>
+        <button id="next-page" type="button" onclick="nextPage()">下一页</button>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/static/common.js"></script>
+<script>
+let records = [];
+let total = 0;
+let page = 1;
+const pageSize = 10;
+const bucketAssets = {
+  BTC_CYCLE: ["BTC"],
+  CRCL_GROWTH: ["CRCL"],
+  US_INDEX_CORE: ["QQQM", "VOO"]
+};
+
+function syncAssetOptions(preferred = ""){
+  const options = bucketAssets[$("bucket").value] || [];
+  const selected = options.includes(preferred) ? preferred : options[0];
+  $("asset").innerHTML = options.map(asset => `<option value="${asset}">${asset}</option>`).join("");
+  $("asset").value = selected || "";
+}
+
+function numValue(id){
+  const raw = $(id).value;
+  if(raw === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function setCalculated(id, value, digits){
+  if(!Number.isFinite(value) || value <= 0) return;
+  $(id).value = value.toFixed(digits).replace(/\.?0+$/, "");
+}
+
+function recalcTradeFields(changedId){
+  const amount = numValue("amount");
+  const price = numValue("price");
+  const shares = numValue("shares");
+  if(changedId === "amount"){
+    if(amount && price) setCalculated("shares", amount / price, 8);
+    else if(amount && shares) setCalculated("price", amount / shares, 6);
+  } else if(changedId === "price"){
+    if(amount && price) setCalculated("shares", amount / price, 8);
+    else if(price && shares) setCalculated("amount", price * shares, 2);
+  } else if(changedId === "shares"){
+    if(amount && shares) setCalculated("price", amount / shares, 6);
+    else if(price && shares) setCalculated("amount", price * shares, 2);
+  } else if(amount && price && !shares){
+    setCalculated("shares", amount / price, 8);
+  } else if(amount && shares && !price){
+    setCalculated("price", amount / shares, 6);
+  } else if(price && shares && !amount){
+    setCalculated("amount", price * shares, 2);
+  }
+}
+
+function resetForm(){
+  $("tx-form").reset();
+  $("tx-id").value="";
+  $("form-title").textContent="新增交易";
+  $("date").value = new Date().toISOString().slice(0,10);
+  syncAssetOptions();
+}
+
+function formData(){
+  recalcTradeFields();
+  const amount = numValue("amount");
+  const price = numValue("price");
+  const shares = numValue("shares");
+  if(!amount || !price){
+    throw new Error("请至少填写金额+价格，或价格+份额，或金额+份额。");
+  }
+  return {
+    date:$("date").value,
+    bucket:$("bucket").value,
+    asset:$("asset").value,
+    side:$("side").value,
+    amount_usd:amount,
+    price:price,
+    shares:shares,
+    note:$("note").value
+  };
+}
+
+function queryString(){
+  const params = new URLSearchParams({ limit: String(pageSize), offset: String((page - 1) * pageSize) });
+  const values = {
+    q: $("filter-q").value.trim(),
+    asset: $("filter-asset").value,
+    bucket: $("filter-bucket").value,
+    side: $("filter-side").value,
+    date_from: $("filter-from").value,
+    date_to: $("filter-to").value
+  };
+  Object.entries(values).forEach(([k, v]) => { if (v) params.set(k, v); });
+  return params.toString();
+}
+
+async function load(){
+  const data = await api(`/api/transactions?${queryString()}`);
+  records = data.rows || [];
+  total = data.total || 0;
+  $("rows").innerHTML = records.length ? records.map(r => `
+    <tr>
+      <td data-label="日期">${text(r.date)}</td>
+      <td data-label="仓位">${text(r.bucket)}</td>
+      <td data-label="资产">${text(r.asset)}</td>
+      <td data-label="方向">${text(r.side)}</td>
+      <td data-label="金额">${money(r.amount_usd)}</td>
+      <td data-label="价格">${money(r.price)}</td>
+      <td data-label="份额">${fmt(r.shares,6)}</td>
+      <td data-label="备注">${text(r.note)}</td>
+      <td data-label="操作"><button onclick="edit(${r.id})">编辑</button> <button onclick="del(${r.id})">删除</button></td>
+    </tr>
+  `).join("") : `<tr><td colspan="9" class="muted">没有符合条件的记录</td></tr>`;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  $("record-count").textContent = `共 ${total} 条，每页 ${pageSize} 条`;
+  $("page-info").textContent = `第 ${page} / ${pages} 页`;
+  $("prev-page").disabled = page <= 1;
+  $("next-page").disabled = page >= pages;
+}
+
+function applyFilters(){ page = 1; load().catch(err=>alert(err.message)); }
+function resetFilters(){
+  ["filter-q","filter-asset","filter-bucket","filter-side","filter-from","filter-to"].forEach(id => $(id).value = "");
+  page = 1;
+  load().catch(err=>alert(err.message));
+}
+function prevPage(){ if(page > 1){ page--; load().catch(err=>alert(err.message)); } }
+function nextPage(){ if(page * pageSize < total){ page++; load().catch(err=>alert(err.message)); } }
+function edit(id){
+  const r=records.find(x=>x.id===id);
+  if(!r) return;
+  $("tx-id").value=r.id;
+  $("date").value=r.date;
+  $("bucket").value=r.bucket;
+  syncAssetOptions(r.asset);
+  $("asset").value=r.asset;
+  $("side").value=r.side;
+  $("amount").value=r.amount_usd;
+  $("price").value=r.price;
+  $("shares").value=r.shares;
+  $("note").value=r.note||"";
+  $("form-title").textContent="编辑交易";
+  scrollTo(0,0);
+}
+async function del(id){
+  if(!confirm("确认删除？")) return;
+  try {
+    await api(`/api/transactions/${id}`, {method:"DELETE", headers:tokenHeaders()});
+    await load();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+$("tx-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const id=$("tx-id").value;
+  $("save-btn").disabled = true;
+  $("form-status").textContent = "保存中...";
+  try {
+    const payload = formData();
+    await api(id?`/api/transactions/${id}`:"/api/transactions", {method:id?"PUT":"POST", headers:tokenHeaders(), body:JSON.stringify(payload)});
+    resetForm();
+    $("form-status").textContent = "已保存";
+    await load();
+  } catch (err) {
+    $("form-status").textContent = "";
+    alert(err.message);
+  } finally {
+    $("save-btn").disabled = false;
+  }
+});
+["filter-q","filter-asset","filter-bucket","filter-side","filter-from","filter-to"].forEach(id => {
+  $(id).addEventListener("change", applyFilters);
+});
+$("bucket").addEventListener("change", () => syncAssetOptions());
+["amount","price","shares"].forEach(id => {
+  $(id).addEventListener("input", () => recalcTradeFields(id));
+});
+$("filter-q").addEventListener("keydown", e => { if(e.key === "Enter") applyFilters(); });
+resetForm();
+load().catch(err=>alert(err.message));
+</script>
+</body>
+</html>
