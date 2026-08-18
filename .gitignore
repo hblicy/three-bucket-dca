@@ -12,3 +12,4 @@ logs/
 *.db-journal
 *.lock
 .server.pid
+.worktrees/
