@@ -236,7 +236,7 @@ function drawPerformanceChart(series) {
       <strong>${text(point.date)}</strong>
       <span><i class="tooltip-dot value"></i>组合市值 ${money(point.value)}</span>
       <span><i class="tooltip-dot cost"></i>累计投入 ${money(point.cost)}</span>
-      <span>当日收益率 <b class="${colorClass(pointReturnPct)}">${pct(pointReturnPct)}</b></span>
+      <span>收益率 <b class="${colorClass(pointReturnPct)}">${pct(pointReturnPct)}</b></span>
     `;
     tooltip.hidden = false;
     const pointCssX = pointX * bounds.width / w;
