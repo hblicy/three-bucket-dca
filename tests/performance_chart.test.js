@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   nearestPointIndex,
+  returnPct,
   tooltipLeft,
 } = require("../web/static/performance-chart.js");
 
@@ -24,4 +25,13 @@ test("tooltipLeft uses the right side when there is room", () => {
 test("tooltipLeft flips left and stays inside the chart", () => {
   assert.equal(tooltipLeft(900, 960, 180), 708);
   assert.equal(tooltipLeft(20, 160, 180), 8);
+});
+
+test("returnPct calculates cumulative return for the selected date", () => {
+  assert.equal(returnPct(1250, 1000), 25);
+  assert.equal(returnPct(900, 1000), -10);
+});
+
+test("returnPct returns null when cumulative cost is zero", () => {
+  assert.equal(returnPct(0, 0), null);
 });

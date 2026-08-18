@@ -15,7 +15,13 @@ const PerformanceChart = (() => {
     return Math.max(margin, Math.min(preferred, chartWidth - tooltipWidth - margin));
   }
 
-  return { nearestPointIndex, tooltipLeft };
+  function returnPct(value, cost) {
+    const numericCost = Number(cost);
+    if (numericCost === 0) return null;
+    return (Number(value) - numericCost) / numericCost * 100;
+  }
+
+  return { nearestPointIndex, tooltipLeft, returnPct };
 })();
 
 if (typeof module !== "undefined" && module.exports) {

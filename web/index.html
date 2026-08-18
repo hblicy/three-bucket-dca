@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>三仓定投计划</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260818-1">
+  <link rel="stylesheet" href="/static/style.css?v=20260818-2">
 </head>
 <body>
 <div class="layout">
@@ -61,8 +61,8 @@
     </section>
   </main>
 </div>
-<script src="/static/common.js?v=20260818-1"></script>
-<script src="/static/performance-chart.js?v=20260818-1"></script>
+<script src="/static/common.js?v=20260818-2"></script>
+<script src="/static/performance-chart.js?v=20260818-2"></script>
 <script>
 const colorClass = (n) => n === null || n === undefined ? "yellow" : Number(n) >= 0 ? "green" : "red";
 let activePerformanceScope = "all";
@@ -230,11 +230,13 @@ function drawPerformanceChart(series) {
     costDot.setAttribute("cx", pointX);
     costDot.setAttribute("cy", y(Number(point.cost)));
     hover.removeAttribute("hidden");
+    const pointReturnPct = PerformanceChart.returnPct(point.value, point.cost);
 
     tooltip.innerHTML = `
       <strong>${text(point.date)}</strong>
       <span><i class="tooltip-dot value"></i>组合市值 ${money(point.value)}</span>
       <span><i class="tooltip-dot cost"></i>累计投入 ${money(point.cost)}</span>
+      <span>当日收益率 <b class="${colorClass(pointReturnPct)}">${pct(pointReturnPct)}</b></span>
     `;
     tooltip.hidden = false;
     const pointCssX = pointX * bounds.width / w;

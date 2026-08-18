@@ -24,3 +24,8 @@ test("performance page assets use the same cache version", () => {
   assert.equal(commonVersion, styleVersion);
   assert.equal(chartVersion, styleVersion);
 });
+
+test("chart tooltip includes return for the selected date", () => {
+  assert.match(indexHtml, /当日收益率/);
+  assert.match(indexHtml, /PerformanceChart\.returnPct\(point\.value, point\.cost\)/);
+});
