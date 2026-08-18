@@ -57,6 +57,27 @@ p { color: var(--muted); margin-top: 8px; }
 .performance-warning[hidden] { display: none; }
 .chart-wrap { position: relative; height: 360px; border: 1px solid var(--line); border-radius: 8px; background: #0d141d; overflow: hidden; }
 .chart-wrap svg { width: 100%; height: 100%; display: block; }
+.chart-tooltip {
+  position: absolute;
+  z-index: 2;
+  min-width: 180px;
+  padding: 10px 12px;
+  border: 1px solid rgba(88,166,255,.45);
+  border-radius: 8px;
+  background: rgba(10,15,22,.94);
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  pointer-events: none;
+}
+.chart-tooltip[hidden], .chart-hover[hidden] { display: none; }
+.chart-tooltip strong { display: block; margin-bottom: 8px; }
+.chart-tooltip span { display: block; color: #c9d8e8; font-size: 12px; line-height: 1.8; }
+.tooltip-dot { display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; }
+.tooltip-dot.value { background: var(--green); }
+.tooltip-dot.cost { background: var(--red); }
+.chart-hover-line { stroke: rgba(183,216,255,.55); stroke-width: 1; stroke-dasharray: 3 4; }
+.chart-hover-dot.value-dot { fill: var(--green); stroke: #0d141d; stroke-width: 2; }
+.chart-hover-dot.cost-dot { fill: var(--red); stroke: #0d141d; stroke-width: 2; }
+.chart-hit-area { fill: transparent; pointer-events: all; cursor: crosshair; }
 .grid-line { stroke: rgba(147,167,189,.14); stroke-width: 1; stroke-dasharray: 3 4; }
 .grid-line.vertical { stroke: rgba(147,167,189,.11); }
 .axis-zero { stroke: rgba(147,167,189,.28); stroke-width: 1; }

@@ -51,6 +51,7 @@
       <div class="performance-warning" id="performance-warning" hidden></div>
       <div class="chart-wrap">
         <svg id="performance-chart" viewBox="0 0 960 360" preserveAspectRatio="none"></svg>
+        <div class="chart-tooltip" id="performance-tooltip" hidden></div>
         <div class="chart-empty" id="performance-empty" hidden>暂无曲线数据</div>
       </div>
       <div class="chart-legend">
@@ -61,6 +62,7 @@
   </main>
 </div>
 <script src="/static/common.js"></script>
+<script src="/static/performance-chart.js"></script>
 <script>
 const colorClass = (n) => n === null || n === undefined ? "yellow" : Number(n) >= 0 ? "green" : "red";
 let activePerformanceScope = "all";
@@ -118,7 +120,9 @@ async function loadPerformance(scope) {
 
 function drawPerformanceChart(series) {
   const svg = $("performance-chart");
+  const tooltip = $("performance-tooltip");
   svg.innerHTML = "";
+  tooltip.hidden = true;
   const points = series.filter(p => p.value !== null && p.cost !== null);
   $("performance-empty").hidden = points.length > 1;
   if (points.length <= 1) return;
@@ -192,7 +196,53 @@ function drawPerformanceChart(series) {
     <circle cx="${x(points.length - 1)}" cy="${y(Number(points[points.length - 1].value))}" r="4" class="last-dot"></circle>
     <text x="${pad.left}" y="${h - 28}" class="axis-label endpoint">${first}</text>
     <text x="${w - pad.right - 42}" y="${h - 28}" class="axis-label endpoint">${last}</text>
+    <g class="chart-hover" hidden>
+      <line class="chart-hover-line" y1="${pad.top}" y2="${h - pad.bottom}"></line>
+      <circle class="chart-hover-dot value-dot" r="4"></circle>
+      <circle class="chart-hover-dot cost-dot" r="4"></circle>
+    </g>
+    <rect class="chart-hit-area" x="${pad.left}" y="${pad.top}"
+      width="${w - pad.left - pad.right}" height="${h - pad.top - pad.bottom}"></rect>
   `;
+
+  const hitArea = svg.querySelector(".chart-hit-area");
+  const hover = svg.querySelector(".chart-hover");
+  const hoverLine = hover.querySelector(".chart-hover-line");
+  const valueDot = hover.querySelector(".value-dot");
+  const costDot = hover.querySelector(".cost-dot");
+
+  const hideHover = () => {
+    hover.setAttribute("hidden", "");
+    tooltip.hidden = true;
+  };
+
+  hitArea.addEventListener("pointermove", (event) => {
+    const bounds = svg.getBoundingClientRect();
+    const svgX = (event.clientX - bounds.left) * w / bounds.width;
+    const idx = PerformanceChart.nearestPointIndex(svgX, pad.left, w - pad.right, points.length);
+    const point = points[idx];
+    const pointX = x(idx);
+
+    hoverLine.setAttribute("x1", pointX);
+    hoverLine.setAttribute("x2", pointX);
+    valueDot.setAttribute("cx", pointX);
+    valueDot.setAttribute("cy", y(Number(point.value)));
+    costDot.setAttribute("cx", pointX);
+    costDot.setAttribute("cy", y(Number(point.cost)));
+    hover.removeAttribute("hidden");
+
+    tooltip.innerHTML = `
+      <strong>${text(point.date)}</strong>
+      <span><i class="tooltip-dot value"></i>组合市值 ${money(point.value)}</span>
+      <span><i class="tooltip-dot cost"></i>累计投入 ${money(point.cost)}</span>
+    `;
+    tooltip.hidden = false;
+    const pointCssX = pointX * bounds.width / w;
+    tooltip.style.left = `${PerformanceChart.tooltipLeft(pointCssX, bounds.width, tooltip.offsetWidth)}px`;
+    tooltip.style.top = "12px";
+  });
+
+  hitArea.addEventListener("pointerleave", hideHover);
 }
 
 $("performance-tabs").addEventListener("click", (event) => {
