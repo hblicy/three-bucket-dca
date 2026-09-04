@@ -7,10 +7,10 @@ StartLimitBurst=5
 
 [Service]
 Type=oneshot
-User=indexpulse
-Group=indexpulse
-EnvironmentFile=/etc/three-bucket-dca.env
-WorkingDirectory=/opt/three-bucket-dca
+User=ubuntu
+Group=ubuntu
+EnvironmentFile=/home/ubuntu/three-bucket-dca/three-bucket-dca.env
+WorkingDirectory=/home/ubuntu/three-bucket-dca
 ExecStart=/bin/bash -lc 'mkdir -p logs && .venv/bin/python scripts/update.py >> logs/update.log 2>&1'
 Restart=on-failure
 RestartSec=5

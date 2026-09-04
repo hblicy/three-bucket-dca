@@ -1,4 +1,5 @@
 .env
+three-bucket-dca.env
 __pycache__/
 *.py[cod]
 .venv/

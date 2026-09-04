@@ -51,7 +51,6 @@ async function load(){
   const data = await api("/api/settings");
   $("setting-summary").innerHTML = `
     <div class="card"><div class="name">写操作 Token</div><strong class="${data.write_token_configured ? "green" : "red"}">${data.write_token_configured ? "已配置" : "未配置"}</strong></div>
-    <div class="card"><div class="name">FRED API</div><strong class="${data.fred_configured ? "green" : "yellow"}">${data.fred_configured ? "已配置" : "未配置"}</strong></div>
     <div class="card"><div class="name">企业微信</div><strong class="${data.wework_configured ? "green" : "yellow"}">${data.wework_configured ? "已配置" : "未配置"}</strong></div>
     <div class="card"><div class="name">数据库</div><strong>${text(data.db_path)}</strong></div>
   `;

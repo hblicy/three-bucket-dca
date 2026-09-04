@@ -1,0 +1,13 @@
+[Unit]
+Description=DCA Tracker BTC halving state update
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/three-bucket-dca
+ExecStart=/home/ubuntu/three-bucket-dca/.venv/bin/python scripts/update_btc_halving.py
+NoNewPrivileges=true
+PrivateTmp=true

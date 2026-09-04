@@ -1,21 +1,31 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from . import performance, portfolio, rules
 from .db import connect, write_lock
 
 
 DASHBOARD_KEY = "dashboard"
+DASHBOARD_CACHE_MAX_AGE = timedelta(minutes=15)
 PERFORMANCE_SCOPES = ["all", "BTC_CYCLE", "CRCL_GROWTH", "US_INDEX_CORE"]
 
 
-def get_cache(key: str) -> dict | None:
+def get_cache(key: str, max_age: timedelta | None = None) -> dict | None:
     with connect() as conn:
         row = conn.execute("SELECT payload, updated_at FROM api_cache WHERE cache_key = ?", (key,)).fetchone()
     if not row:
         return None
+    if max_age is not None:
+        try:
+            updated_at = datetime.fromisoformat(row["updated_at"])
+        except (TypeError, ValueError):
+            return None
+        now = datetime.now(updated_at.tzinfo) if updated_at.tzinfo else datetime.now()
+        age = now - updated_at
+        if age < timedelta(0) or age > max_age:
+            return None
     payload = json.loads(row["payload"])
     payload["cache"] = {"key": key, "updated_at": row["updated_at"], "hit": True}
     return payload

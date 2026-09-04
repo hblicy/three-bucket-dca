@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from dca_tracker import cache, portfolio
-from dca_tracker.config import FRED_API_KEY, HOST, PORT, READ_TOKEN, ROOT, WEWORK_BOT_WEBHOOK, WRITE_TOKEN
+from dca_tracker.config import HOST, PORT, READ_TOKEN, ROOT, WEWORK_BOT_WEBHOOK, WRITE_TOKEN
 from dca_tracker.db import backup_db, connect, init_db, rows_to_dicts, write_lock
 from dca_tracker.migration import migrate_all
 from dca_tracker.portfolio import VALID_ASSETS, VALID_BUCKETS
@@ -138,7 +138,9 @@ def health(x_dca_read_token: str | None = Header(default=None)):
 def dashboard(x_dca_read_token: str | None = Header(default=None), refresh: bool = False):
     require_read_token(x_dca_read_token)
     if not refresh:
-        cached = cache.get_cache(cache.DASHBOARD_KEY)
+        cached = cache.get_cache(
+            cache.DASHBOARD_KEY, max_age=cache.DASHBOARD_CACHE_MAX_AGE
+        )
         if cached:
             return cached
     data = cache.build_dashboard()
@@ -317,7 +319,6 @@ def settings(x_dca_read_token: str | None = Header(default=None)):
     return {
         "write_token_configured": bool(WRITE_TOKEN),
         "read_token_configured": bool(READ_TOKEN),
-        "fred_configured": bool(FRED_API_KEY),
         "wework_configured": bool(WEWORK_BOT_WEBHOOK),
         "db_path": "data/dca_tracker.db",
         "migration_state": migration,
@@ -330,8 +331,8 @@ def settings(x_dca_read_token: str | None = Header(default=None)):
 def rules_api(x_dca_read_token: str | None = Header(default=None)):
     require_read_token(x_dca_read_token)
     return {
-        "BTC": "每周一 16:00 北京时间；Proxy vFinal + AHR999 + Puell 生成 DCA Score，按历史分位决定 0/0.5/1/2/4 倍基础金额。",
-        "CRCL": "每周二 16:00 北京时间；价格分位、MA60 偏离、90日回撤、基本面评分合成 DCA Score，决定 0/0.5/1/2 倍基础金额。",
+        "BTC": "每周一 16:00 北京时间；Proxy vFinal / AHR999 / Puell 按 40% / 25% / 35% 生成 DCA Score，三个指标必须齐全，再按历史分位决定 0/0.5/1/2/4 倍基础金额。",
+        "CRCL": "每周二 16:00 北京时间；价格分位、MA60 偏离、距 90 日高点回撤合成并归一化为 DCA Score，决定 0/0.5/1/2 倍基础金额；USDC 24 小时流通量异常下降超过 5% 时暂停。",
         "US_INDEX": "月末美股收盘后计算；下一个美股交易日 16:00 北京时间推送。奇数月 VOO 稳投 1x，偶数月 QQQM 按纳指 PE 分层，跌破 10 月均线时降一级。",
     }
 

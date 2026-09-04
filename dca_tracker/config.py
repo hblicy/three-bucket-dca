@@ -27,14 +27,12 @@ BACKUP_KEEP = int(os.environ.get("DCA_BACKUP_KEEP", "30"))
 WRITE_TOKEN = os.environ.get("DCA_WRITE_TOKEN", "")
 READ_TOKEN = os.environ.get("DCA_READ_TOKEN", "")
 WEWORK_BOT_WEBHOOK = os.environ.get("WEWORK_BOT_WEBHOOK", "")
-FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 HOST = os.environ.get("DCA_HOST", "127.0.0.1")
 PORT = int(os.environ.get("DCA_PORT", "8020"))
 
 BTC_BASE_AMOUNT = float(os.environ.get("BTC_BASE_AMOUNT", "100"))
 CRCL_BASE_AMOUNT = float(os.environ.get("CRCL_BASE_AMOUNT", "100"))
 US_INDEX_MONTHLY_AMOUNT = float(os.environ.get("US_INDEX_MONTHLY_AMOUNT", "500"))
-CRCL_FUNDAMENTALS_CACHE_TTL = int(os.environ.get("CRCL_FUNDAMENTALS_CACHE_TTL", "3600"))
 
 BEIJING_TZ = "Asia/Shanghai"
 
