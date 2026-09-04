@@ -25,9 +25,11 @@ def migrate_btc() -> dict[str, int | str]:
     src = _legacy_conn(LEGACY_PATHS["btc"])
     if src is None:
         return _empty_stats()
-    rows = src.execute("SELECT id, date, amount, price, btc_bought, notes FROM investments ORDER BY id").fetchall()
+    try:
+        rows = src.execute("SELECT id, date, amount, price, btc_bought, notes FROM investments ORDER BY id").fetchall()
+    finally:
+        src.close()
     with write_lock(), connect() as dst:
-        dst.execute("DELETE FROM transactions WHERE source = 'BTC_DDCA_old999'")
         count = 0
         for row in rows:
             cur = dst.execute(
@@ -59,9 +61,11 @@ def migrate_crcl() -> dict[str, int | str]:
     src = _legacy_conn(LEGACY_PATHS["crcl"])
     if src is None:
         return _empty_stats()
-    rows = src.execute("SELECT id, type, date, amount_usd, price, shares, notes FROM investments ORDER BY id").fetchall()
+    try:
+        rows = src.execute("SELECT id, type, date, amount_usd, price, shares, notes FROM investments ORDER BY id").fetchall()
+    finally:
+        src.close()
     with write_lock(), connect() as dst:
-        dst.execute("DELETE FROM transactions WHERE source = 'CRCL_DCA'")
         count = 0
         for row in rows:
             side = row["type"] or ("sell" if float(row["shares"]) < 0 else "buy")
@@ -95,9 +99,11 @@ def migrate_us_index() -> dict[str, int | str]:
     src = _legacy_conn(LEGACY_PATHS["us_index"])
     if src is None:
         return _empty_stats()
-    rows = src.execute("SELECT id, date, symbol, amount_usd, price, shares, note FROM investments ORDER BY id").fetchall()
+    try:
+        rows = src.execute("SELECT id, date, symbol, amount_usd, price, shares, note FROM investments ORDER BY id").fetchall()
+    finally:
+        src.close()
     with write_lock(), connect() as dst:
-        dst.execute("DELETE FROM transactions WHERE source = 'US_INDEX_DCA'")
         count = 0
         for row in rows:
             cur = dst.execute(

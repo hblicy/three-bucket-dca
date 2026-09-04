@@ -103,14 +103,14 @@ def is_us_index_signal_due(now: datetime | None = None) -> bool:
 
 def is_due(decision: Decision, now: datetime | None = None) -> bool:
     now = now or _today()
-    if decision.recommended_amount <= 0:
+    if not decision.data_ok:
         return False
     if decision.bucket == "BTC_CYCLE":
-        return now.weekday() == 0 and now.hour == 16
+        return decision.status in {"buy", "pause"} and now.weekday() == 0 and now.hour == 16
     if decision.bucket == "CRCL_GROWTH":
-        return now.weekday() == 1 and now.hour == 16
+        return decision.status in {"buy", "pause"} and now.weekday() == 1 and now.hour == 16
     if decision.bucket == "US_INDEX_CORE":
-        return is_us_index_signal_due(now)
+        return decision.recommended_amount > 0 and is_us_index_signal_due(now)
     return False
 
 

@@ -129,14 +129,6 @@ p { color: var(--muted); margin-top: 8px; }
 .rule-block ul { margin: 8px 0 0; padding-left: 18px; }
 .rule-block.metric strong { display: block; font-size: 18px; margin-bottom: 8px; }
 .rule-block.metric span { display: inline-flex; margin-top: 12px; color: var(--green); background: rgba(53,208,127,.10); border-radius: 999px; padding: 4px 8px; font-size: 12px; }
-.fundamentals-live { margin: 14px 0; }
-.fund-head { display: flex; justify-content: space-between; gap: 14px; align-items: flex-start; margin-bottom: 14px; }
-.fund-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.fund-item { position: relative; min-height: 82px; background: #0a111c; border: 1px solid rgba(38,52,71,.65); border-radius: 8px; padding: 14px 84px 14px 14px; }
-.fund-item.wide { grid-column: 1 / -1; }
-.fund-item span { display: block; color: #a8c9ee; font-size: 13px; margin-bottom: 10px; }
-.fund-item strong { display: block; color: var(--text); font-size: 16px; }
-.fund-item small { position: absolute; right: 14px; top: 14px; color: #9fc8ff; font-size: 12px; }
 .rule-table th, .rule-table td { white-space: normal; }
 .rule-table td:last-child { color: var(--green); font-weight: 700; }
 .score-range-label { display: inline-block; min-width: 82px; }
@@ -194,8 +186,6 @@ pre { white-space: pre-wrap; color: var(--muted); }
   .section-head { flex-direction: column; }
   .perf-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rule-hero, .rule-title { flex-direction: column; }
-  .fund-head { flex-direction: column; }
-  .fund-grid { grid-template-columns: 1fr; }
   .rule-pills { justify-content: flex-start; }
   .rule-grid, .rule-grid.three { grid-template-columns: 1fr; }
   form { grid-template-columns: 1fr; }
