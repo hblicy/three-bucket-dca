@@ -95,15 +95,15 @@ async function load(refresh = false) {
   $("assets").innerHTML = data.portfolio.assets.map(x => `
     <tr><td data-label="资产">${text(x.asset)}</td><td data-label="份额">${fmt(x.shares, 6)}</td><td data-label="成本">${money(x.cost)}</td><td data-label="均价">${money(x.avg_cost)}</td><td data-label="现价">${money(x.price)}</td><td data-label="市值">${money(x.value)}</td><td data-label="盈亏" class="${colorClass(x.pnl)}">${money(x.pnl)}</td></tr>
   `).join("");
-  await loadPerformance(activePerformanceScope);
+  await loadPerformance(activePerformanceScope, refresh);
 }
 
-async function loadPerformance(scope) {
+async function loadPerformance(scope, refresh = false) {
   activePerformanceScope = scope;
   document.querySelectorAll("#performance-tabs button").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.scope === scope);
   });
-  const data = await api(`/api/performance?scope=${encodeURIComponent(scope)}`);
+  const data = await api(`/api/performance?scope=${encodeURIComponent(scope)}${refresh ? "&refresh=true" : ""}`);
   const perfErrors = data.errors || [];
   $("performance-warning").hidden = data.data_ok !== false;
   $("performance-warning").textContent = data.data_ok === false

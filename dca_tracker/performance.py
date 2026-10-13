@@ -107,7 +107,7 @@ def _price_maps(assets: list[str], start: date) -> tuple[dict[str, dict[str, flo
             close.index = pd.to_datetime(close.index).tz_localize(None).date
             daily = pd.Series(close.values, index=pd.to_datetime(list(close.index)))
             all_days = pd.date_range(start=start, end=date.today(), freq="D")
-            filled = daily.reindex(all_days).ffill()
+            filled = daily.reindex(all_days, method="ffill")
             out[asset] = {
                 idx.date().isoformat(): float(value)
                 for idx, value in filled.dropna().items()
