@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from numbers import Real
 
@@ -13,6 +14,8 @@ import yfinance as yf
 from .config import ROOT
 
 
+# yfinance 0.2.x shares download results between callers, even with threads=False.
+_YFINANCE_DOWNLOAD_LOCK = threading.Lock()
 YFINANCE_CACHE_DIR = ROOT / "data" / "yfinance_cache"
 YFINANCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 NASDAQ_PE_CACHE_FILE = YFINANCE_CACHE_DIR / "nasdaq_pe.json"
@@ -37,10 +40,11 @@ def _flatten(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def history(symbol: str, period: str = "1y", start: str | None = None) -> pd.DataFrame:
-    if start:
-        data = yf.download(symbol, start=start, auto_adjust=False, progress=False, threads=False, timeout=20)
-    else:
-        data = yf.download(symbol, period=period, auto_adjust=False, progress=False, threads=False, timeout=20)
+    with _YFINANCE_DOWNLOAD_LOCK:
+        if start:
+            data = yf.download(symbol, start=start, auto_adjust=False, progress=False, threads=False, timeout=20)
+        else:
+            data = yf.download(symbol, period=period, auto_adjust=False, progress=False, threads=False, timeout=20)
     data = _flatten(data)
     if data.empty or "Close" not in data:
         raise RuntimeError(f"No price history for {symbol}")
@@ -209,7 +213,8 @@ def monthly_trend(symbol: str, months: int = 10) -> dict:
 
 
 def btc_history() -> pd.DataFrame:
-    df = yf.download("BTC-USD", start="2011-01-01", interval="1d", auto_adjust=False, progress=False, threads=False, timeout=30)
+    with _YFINANCE_DOWNLOAD_LOCK:
+        df = yf.download("BTC-USD", start="2011-01-01", interval="1d", auto_adjust=False, progress=False, threads=False, timeout=30)
     df = _flatten(df).reset_index()
     if df.empty:
         raise RuntimeError("BTC price data is empty")
