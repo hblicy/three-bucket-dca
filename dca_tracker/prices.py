@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 from datetime import datetime, timedelta, timezone
 from numbers import Real
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -48,11 +50,43 @@ def history(symbol: str, period: str = "1y", start: str | None = None) -> pd.Dat
     data = _flatten(data)
     if data.empty or "Close" not in data:
         raise RuntimeError(f"No price history for {symbol}")
+    if symbol.upper() in {"CRCL", "QQQM", "VOO"} and pd.isna(data["Close"].iloc[-1]):
+        data = _fill_missing_latest_equity_close(data, symbol)
     if _positive_float(data["Close"].iloc[-1]) is None:
         raise RuntimeError(f"Invalid latest price for {symbol}")
     max_age = BTC_PRICE_MAX_AGE if symbol.upper() in {"BTC", "BTC-USD"} else US_EQUITY_PRICE_MAX_AGE
     _validate_latest_price_date(data.index[-1], symbol, max_age)
     return data.dropna(subset=["Close"])
+
+
+def _fill_missing_latest_equity_close(data: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    # Metadata lookup may call Ticker.history(), which also touches yfinance's shared state.
+    with _YFINANCE_DOWNLOAD_LOCK:
+        metadata = yf.Ticker(symbol).get_history_metadata()
+    error = f"Invalid latest price for {symbol}"
+    if not isinstance(metadata, dict) or metadata.get("symbol") != symbol.upper():
+        raise RuntimeError(f"{error}: missing or mismatched quote symbol")
+    price = _positive_real(metadata.get("regularMarketPrice"))
+    timestamp = _positive_real(metadata.get("regularMarketTime"))
+    if price is None or timestamp is None:
+        raise RuntimeError(f"{error}: invalid quote price or timestamp")
+    try:
+        exchange_tz = ZoneInfo(metadata["exchangeTimezoneName"])
+        quote_time = pd.to_datetime(timestamp, unit="s", utc=True)
+        latest = pd.Timestamp(data.index[-1])
+        latest_date = latest.tz_convert(exchange_tz).date() if latest.tzinfo else latest.date()
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise RuntimeError(f"{error}: invalid quote date or exchange timezone") from exc
+    if quote_time > _utc_now() or quote_time.tz_convert(exchange_tz).date() != latest_date:
+        raise RuntimeError(f"{error}: quote time does not match the latest trading date")
+    _validate_latest_price_date(data.index[-1], symbol, US_EQUITY_PRICE_MAX_AGE)
+    repaired = data.copy()
+    repaired.iloc[-1, repaired.columns.get_loc("Close")] = price
+    logging.getLogger(__name__).warning(
+        "Filled missing Close for %s on %s from Yahoo regularMarketPrice=%s at %s",
+        symbol, latest_date.isoformat(), price, quote_time.isoformat(),
+    )
+    return repaired
 
 
 def _validated_close(data: pd.DataFrame, symbol: str) -> pd.Series:

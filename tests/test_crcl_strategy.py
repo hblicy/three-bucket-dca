@@ -222,8 +222,10 @@ class CrclStrategyTest(unittest.TestCase):
                 history = pd.DataFrame({"Close": [100.0] * 90 + [invalid_close]})
                 with (
                     patch.object(rules.prices.yf, "download", return_value=history),
+                    patch.object(rules.prices.yf, "Ticker") as ticker,
                     patch.object(rules, "_crcl_usdc_risk", return_value=usdc_risk),
                 ):
+                    ticker.return_value.get_history_metadata.return_value = {}
                     decision = rules.crcl_decision()
                 self.assertFalse(decision.data_ok)
                 self.assertEqual(decision.status, "error")
