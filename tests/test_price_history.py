@@ -75,7 +75,11 @@ class PriceHistoryTest(unittest.TestCase):
             for invalid_close in (np.nan, np.inf, -np.inf, 0.0, -1.0):
                 with self.subTest(symbol=symbol, invalid_close=invalid_close):
                     frame = pd.DataFrame({"Close": [100.0, invalid_close]}, index=dates)
-                    with patch.object(prices.yf, "download", return_value=frame):
+                    with (
+                        patch.object(prices.yf, "download", return_value=frame),
+                        patch.object(prices.yf, "Ticker") as ticker,
+                    ):
+                        ticker.return_value.get_history_metadata.return_value = {}
                         with self.assertRaisesRegex(RuntimeError, f"Invalid latest price for {symbol}"):
                             prices.latest_price(symbol)
 
