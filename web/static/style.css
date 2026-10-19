@@ -40,6 +40,11 @@ p { color: var(--muted); margin-top: 8px; }
 .card .name { color: var(--muted); font-size: 12px; }
 .card strong { display: block; margin-top: 8px; font-size: 26px; }
 .decision { display: grid; gap: 10px; }
+.decision-reason { overflow-wrap: anywhere; }
+.btc-reference { font-size: 14px; line-height: 1.6; }
+.btc-reference strong { white-space: nowrap; }
+.btc-reference small { display: block; margin-top: 4px; font-size: 12px; }
+.btc-reference a { color: inherit; text-underline-offset: 2px; }
 .tag { display: inline-flex; width: fit-content; padding: 3px 8px; border-radius: 999px; font-size: 12px; background: #1f2b3a; color: var(--blue); }
 .tag.buy { color: var(--green); background: rgba(53,208,127,.12); }
 .tag.pause, .tag.error, .tag.review { color: var(--red); background: rgba(255,107,107,.12); }

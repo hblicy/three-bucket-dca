@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>三仓定投计划</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260818-2">
+  <link rel="stylesheet" href="/static/style.css?v=20261019-2">
 </head>
 <body>
 <div class="layout">
@@ -61,11 +61,24 @@
     </section>
   </main>
 </div>
-<script src="/static/common.js?v=20260818-2"></script>
-<script src="/static/performance-chart.js?v=20260818-2"></script>
+<script src="/static/common.js?v=20261019-2"></script>
+<script src="/static/performance-chart.js?v=20261019-2"></script>
 <script>
 const colorClass = (n) => n === null || n === undefined ? "yellow" : Number(n) >= 0 ? "green" : "red";
 let activePerformanceScope = "all";
+
+function renderStrategyBtcCost(reference) {
+  if (!reference || reference.avg_cost_usd === null || reference.avg_cost_usd === undefined) {
+    return `<div class="btc-reference muted">微策略 BTC 持仓均价：<strong>暂无数据</strong></div>`;
+  }
+  return `
+    <div class="btc-reference muted">
+      微策略 BTC 持仓均价：<strong>${money(reference.avg_cost_usd)}</strong>
+      <small>截至 ${text(reference.as_of)} · <a href="${text(reference.source_url)}" target="_blank" rel="noopener noreferrer">链研社/官方披露</a></small>
+      ${reference.stale ? '<small class="yellow">更新失败，显示上次数据</small>' : ""}
+    </div>
+  `;
+}
 
 async function load(refresh = false) {
   const data = await api(`/api/dashboard${refresh ? "?refresh=true" : ""}`);
@@ -85,7 +98,8 @@ async function load(refresh = false) {
       <span class="tag ${text(d.status)}">${text(d.action)}</span>
       <div class="muted">价格：${money(d.price)}</div>
       <div>建议金额：<strong>${money(d.recommended_amount)}</strong></div>
-      <div class="muted">${text(d.reason)}</div>
+      <div class="muted decision-reason">${text(d.reason)}</div>
+      ${d.asset === "BTC" ? renderStrategyBtcCost(data.strategy_btc) : ""}
       <div class="muted">${text(d.next_window)}</div>
     </div>
   `).join("");
