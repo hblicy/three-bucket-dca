@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta
 
-from . import performance, portfolio, rules
+import requests
+
+from . import performance, portfolio, rules, strategy
 from .db import connect, write_lock
 
 
 DASHBOARD_KEY = "dashboard"
 DASHBOARD_CACHE_MAX_AGE = timedelta(minutes=15)
+STRATEGY_BTC_COST_KEY = "strategy_btc_cost"
+STRATEGY_BTC_COST_MAX_AGE = timedelta(hours=6)
 PERFORMANCE_SCOPES = ["all", "BTC_CYCLE", "CRCL_GROWTH", "US_INDEX_CORE"]
 
 
@@ -44,6 +49,29 @@ def set_cache(key: str, payload: dict) -> None:
         )
 
 
+def strategy_btc_cost() -> dict:
+    cached = get_cache(STRATEGY_BTC_COST_KEY, max_age=STRATEGY_BTC_COST_MAX_AGE)
+    if cached:
+        return {**cached, "stale": False, "error": None}
+    try:
+        data = strategy.fetch_btc_cost()
+    except (requests.RequestException, ValueError) as exc:
+        logging.getLogger(__name__).warning(
+            "Strategy BTC cost refresh failed: source=%s", strategy.STRATEGY_COST_URL, exc_info=True
+        )
+        previous = get_cache(STRATEGY_BTC_COST_KEY)
+        return {
+            **(previous or {"avg_cost_usd": None, "as_of": None, "source_url": None}),
+            "stale": True,
+            "error": {
+                "code": "source_unavailable" if isinstance(exc, requests.RequestException) else "invalid_source_data",
+                "message": str(exc),
+            },
+        }
+    set_cache(STRATEGY_BTC_COST_KEY, data)
+    return {**data, "stale": False, "error": None}
+
+
 def build_dashboard() -> dict:
     decision_objs = rules.all_decisions()
     decisions = [d.__dict__ for d in decision_objs]
@@ -63,6 +91,7 @@ def build_dashboard() -> dict:
         "errors": errors,
         "portfolio": summary,
         "monthly_plan": monthly_plan,
+        "strategy_btc": strategy_btc_cost(),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
 
