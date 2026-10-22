@@ -71,10 +71,11 @@ function renderStrategyBtcCost(reference) {
   if (!reference || reference.avg_cost_usd === null || reference.avg_cost_usd === undefined) {
     return `<div class="btc-reference muted">微策略 BTC 持仓均价：<strong>暂无数据</strong></div>`;
   }
+  const officialLedger = reference.source_url === "https://www.strategy.com/ledger";
   return `
     <div class="btc-reference muted">
       微策略 BTC 持仓均价：<strong>${money(reference.avg_cost_usd)}</strong>
-      <small>截至 ${text(reference.as_of)} · <a href="${text(reference.source_url)}" target="_blank" rel="noopener noreferrer">链研社/官方披露</a></small>
+      <small>${officialLedger ? "披露于" : "截至"} ${text(reference.as_of)} · <a href="${text(reference.source_url)}" target="_blank" rel="noopener noreferrer">${officialLedger ? "Strategy 官方账本" : "Strategy 官方披露"}</a></small>
       ${reference.stale ? '<small class="yellow">更新失败，显示上次数据</small>' : ""}
     </div>
   `;

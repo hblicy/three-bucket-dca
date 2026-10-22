@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 from datetime import datetime, timedelta
 
-import requests
 
 from . import performance, portfolio, rules, strategy
 from .db import connect, write_lock
@@ -13,7 +13,8 @@ from .db import connect, write_lock
 DASHBOARD_KEY = "dashboard"
 DASHBOARD_CACHE_MAX_AGE = timedelta(minutes=15)
 STRATEGY_BTC_COST_KEY = "strategy_btc_cost"
-STRATEGY_BTC_COST_MAX_AGE = timedelta(hours=6)
+STRATEGY_BTC_COST_MAX_AGE = timedelta(days=1)
+STRATEGY_BTC_COST_ATTEMPT_KEY = "strategy_btc_cost_attempt"
 PERFORMANCE_SCOPES = ["all", "BTC_CYCLE", "CRCL_GROWTH", "US_INDEX_CORE"]
 
 
@@ -50,26 +51,43 @@ def set_cache(key: str, payload: dict) -> None:
 
 
 def strategy_btc_cost() -> dict:
-    cached = get_cache(STRATEGY_BTC_COST_KEY, max_age=STRATEGY_BTC_COST_MAX_AGE)
-    if cached:
-        return {**cached, "stale": False, "error": None}
+    cached = get_cache(STRATEGY_BTC_COST_KEY)
+    attempt = get_cache(STRATEGY_BTC_COST_ATTEMPT_KEY)
+    error = attempt.get("error") if attempt else None
+    return {
+        **(cached or {"avg_cost_usd": None, "as_of": None, "source_url": None}),
+        "stale": error is not None,
+        "error": error,
+    }
+
+
+def refresh_strategy_btc_cost() -> dict:
+    with write_lock():
+        attempt = get_cache(STRATEGY_BTC_COST_ATTEMPT_KEY)
+        # A crashed browser worker releases its claim after five minutes.
+        max_age = timedelta(minutes=5) if attempt and attempt.get("pending") else STRATEGY_BTC_COST_MAX_AGE
+        if get_cache(STRATEGY_BTC_COST_ATTEMPT_KEY, max_age=max_age):
+            return strategy_btc_cost()
+        claim = secrets.token_hex(16)
+        set_cache(STRATEGY_BTC_COST_ATTEMPT_KEY, {"pending": claim, "error": attempt.get("error") if attempt else None})
+    error = None
     try:
         data = strategy.fetch_btc_cost()
-    except (requests.RequestException, ValueError) as exc:
+    except (strategy.StrategySourceError, ValueError) as exc:
         logging.getLogger(__name__).warning(
             "Strategy BTC cost refresh failed: source=%s", strategy.STRATEGY_COST_URL, exc_info=True
         )
-        previous = get_cache(STRATEGY_BTC_COST_KEY)
-        return {
-            **(previous or {"avg_cost_usd": None, "as_of": None, "source_url": None}),
-            "stale": True,
-            "error": {
-                "code": "source_unavailable" if isinstance(exc, requests.RequestException) else "invalid_source_data",
-                "message": str(exc),
-            },
+        error = {
+            "code": "source_unavailable" if isinstance(exc, strategy.StrategySourceError) else "invalid_source_data",
+            "message": str(exc),
         }
-    set_cache(STRATEGY_BTC_COST_KEY, data)
-    return {**data, "stale": False, "error": None}
+    with write_lock():
+        current = get_cache(STRATEGY_BTC_COST_ATTEMPT_KEY)
+        if current and current.get("pending") == claim:
+            if error is None:
+                set_cache(STRATEGY_BTC_COST_KEY, data)
+            set_cache(STRATEGY_BTC_COST_ATTEMPT_KEY, {"error": error})
+    return strategy_btc_cost()
 
 
 def build_dashboard() -> dict:
@@ -101,6 +119,7 @@ def build_performance(scope: str) -> dict:
 
 
 def refresh_all() -> dict:
+    refresh_strategy_btc_cost()
     dashboard = build_dashboard()
     set_cache(DASHBOARD_KEY, dashboard)
     perf_counts = {}

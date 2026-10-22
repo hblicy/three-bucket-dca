@@ -44,9 +44,9 @@ async function render(reference) {
 }
 
 const reference = {
-  avg_cost_usd: 75444,
-  as_of: "2026-10-11",
-  source_url: "https://www.strategy.com/press/example",
+  avg_cost_usd: 75446,
+  as_of: "2026-10-19",
+  source_url: "https://www.strategy.com/ledger",
   stale: false,
   error: null,
 };
@@ -57,15 +57,15 @@ test("BTC reference appears between DCA Score and the schedule, only once", asyn
   const position = html.indexOf("微策略 BTC 持仓均价");
   assert.ok(position > html.indexOf("DCA Score 33.5"));
   assert.ok(position < html.indexOf("每周一 16:00 北京时间"));
-  assert.match(html, /<strong>\$75,444\.00<\/strong>/);
-  assert.match(html, /截至 2026-10-11/);
-  assert.match(html, /href="https:\/\/www\.strategy\.com\/press\/example"/);
-  assert.match(html, /链研社[／/]官方披露/);
+  assert.match(html, /<strong>\$75,446\.00<\/strong>/);
+  assert.match(html, /披露于 2026-10-19/);
+  assert.match(html, /href="https:\/\/www\.strategy\.com\/ledger"/);
+  assert.match(html, /Strategy 官方账本/);
 });
 
 test("stale reference keeps the amount and explicitly reports the failed update", async () => {
   const html = await render({ ...reference, stale: true, error: { code: "source_unavailable" } });
-  assert.match(html, /\$75,444\.00/);
+  assert.match(html, /\$75,446\.00/);
   assert.match(html, /更新失败，显示上次数据/);
 });
 
@@ -74,7 +74,7 @@ test("no reference shows unavailable instead of a zero or hard-coded cost", asyn
     const html = await render(value);
     assert.match(html, /微策略 BTC 持仓均价/);
     assert.match(html, /暂无数据/);
-    assert.doesNotMatch(html, /\$75,444|持仓均价：\s*<strong>\$0/);
+    assert.doesNotMatch(html, /\$75,446|持仓均价：\s*<strong>\$0/);
   }
 });
 
@@ -82,4 +82,12 @@ test("source values are escaped before being inserted into HTML", async () => {
   const html = await render({ ...reference, as_of: '<img src=x onerror="alert(1)">' });
   assert.doesNotMatch(html, /<img/);
   assert.match(html, /&lt;img/);
+});
+
+
+test("previous cached disclosure preserves its original date meaning", async () => {
+  const html = await render({ ...reference, avg_cost_usd: 75444, as_of: "2026-10-11", source_url: "https://www.strategy.com/press/previous", stale: true });
+  assert.match(html, /截至 2026-10-11/);
+  assert.match(html, /Strategy 官方披露/);
+  assert.doesNotMatch(html, /链研社|披露于 2026-10-11/);
 });

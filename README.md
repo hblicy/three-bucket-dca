@@ -211,6 +211,12 @@ python scripts/update.py
 - 在定投日发送企业微信提醒。
 - 不重新迁移旧数据库。
 
+微策略 BTC 持仓均价由上述后台任务每天检查一次，通过已安装的 Chrome/Chromium 无头读取 `https://www.strategy.com/ledger` 的 `__NEXT_DATA__.props.pageProps.bitcoinData`，取最新披露记录的 `average_price`。这是累计均价；`purchase_price` 是单笔买入价，不用于该展示。页面日期为账本披露日。
+
+Linux 运行环境需要在 PATH 中提供 `google-chrome`、`google-chrome-stable`、`chromium` 或 `chromium-browser`；Windows 开发环境也支持标准安装目录中的 Chrome。浏览器以运行服务的普通用户执行，保留默认沙箱；本次不新增 Python 依赖。部署前应以同一用户确认 `google-chrome --version` 或 `chromium --version` 可用。
+
+网页和手动刷新只读取均价缓存，不会启动浏览器；首次缓存由后台更新任务生成。采集失败保留最后有效值和披露日期，记录调用链并提示更新失败；失败尝试也记录每天的检查时间，避免每 5 分钟重复启动浏览器。旧版链研社缓存会保留到首次官方采集成功。浏览器采集上限为 90 秒；官网结构或访问策略改变时会明确报错，不用逐笔流水推算替代官方均价。
+
 BTC 减半状态由独立轻量定时器每 1 分钟检查一次。距离目标区块较远时仍复用 6 小时缓存；接近目标区块或不足 6 个确认时按 1 分钟缓存复核，达到 6 个确认后固定最终结果。该任务只更新减半状态缓存，不重复下载完整行情或刷新收益曲线。
 
 如果确实需要定时更新时顺带迁移旧库，可设置：
