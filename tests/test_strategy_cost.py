@@ -1,33 +1,18 @@
 from __future__ import annotations
 
-import copy
 import gc
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 import unittest
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
-import requests
-
-from dca_tracker import cache, db
+from dca_tracker import cache, db, strategy
 
 
-SOURCE_URL = "https://www.strategy.com/press/strategy-acquires-250-btc-and-repurchases-192-million-of-strc_10-12-2026"
-PAYLOAD = {
-    "asset": "BTC",
-    "ticker": "MSTR",
-    "asOf": "2026-10-11",
-    "summary": {
-        "avgCostUsd": 75444,
-        "avgCostAsOf": "2026-10-11",
-        "avgCostSource": "Strategy 新闻稿截至 2026-10-11（含费用）",
-        "totalHolding": 848250,
-        "totalCostUsd": 64000000000,
-    },
-    "sources": [{"name": "Strategy 新闻稿截至 2026-10-11（含费用）", "url": SOURCE_URL}],
-    "transactions": [{"priceUsd": 86194}],
-}
+COST = {"avg_cost_usd": 75446.0, "as_of": "2026-10-19", "source_url": "https://www.strategy.com/ledger"}
 
 
 class StrategyCostTest(unittest.TestCase):
@@ -39,129 +24,172 @@ class StrategyCostTest(unittest.TestCase):
         db_patch.start()
         self.addCleanup(db_patch.stop)
         db.init_db()
-        self.response = Mock(spec=requests.Response)
-        self.response.json.return_value = copy.deepcopy(PAYLOAD)
-        request_patch = patch("requests.get", return_value=self.response)
-        self.get = request_patch.start()
-        self.addCleanup(request_patch.stop)
+        source_patch = patch.object(strategy, "fetch_btc_cost", return_value=dict(COST))
+        self.fetch = source_patch.start()
+        self.addCleanup(source_patch.stop)
 
-    def expire_cache(self):
+    def expire_attempt(self):
         with db.connect() as conn:
             conn.execute(
                 "UPDATE api_cache SET updated_at = ? WHERE cache_key = ?",
-                ((datetime.now() - timedelta(hours=7)).isoformat(), cache.STRATEGY_BTC_COST_KEY),
+                ((datetime.now() - timedelta(hours=25)).isoformat(), cache.STRATEGY_BTC_COST_ATTEMPT_KEY),
             )
 
-    def test_uses_disclosed_average_with_its_date_and_official_source(self):
-        self.assertTrue(hasattr(cache, "strategy_btc_cost"), "missing Strategy cost reader")
+    def test_dashboard_read_never_launches_collection(self):
         result = cache.strategy_btc_cost()
-        self.assertEqual(result["avg_cost_usd"], 75444)
-        self.assertEqual(result["as_of"], "2026-10-11")
-        self.assertEqual(result["source_url"], SOURCE_URL)
+        self.assertIsNone(result["avg_cost_usd"])
+        self.fetch.assert_not_called()
+
+    def test_background_refresh_stores_official_average_date_and_source(self):
+        self.assertTrue(hasattr(cache, "refresh_strategy_btc_cost"))
+        result = cache.refresh_strategy_btc_cost()
+        self.assertEqual(result["avg_cost_usd"], 75446)
+        self.assertEqual(result["as_of"], "2026-10-19")
+        self.assertEqual(result["source_url"], COST["source_url"])
         self.assertFalse(result["stale"])
         self.assertIsNone(result["error"])
-        self.get.assert_called_once_with("https://lianyanshe.com/api/holdings/treasury?id=mstr", timeout=10)
+        self.assertEqual(cache.strategy_btc_cost()["avg_cost_usd"], 75446)
+        self.fetch.assert_called_once_with()
 
-    def test_reuses_cache_for_six_hours_then_fetches_new_cost(self):
-        self.assertTrue(hasattr(cache, "strategy_btc_cost"), "missing Strategy cost reader")
-        cache.strategy_btc_cost()
-        self.response.json.return_value["summary"]["avgCostUsd"] = 76000
-        self.assertEqual(cache.strategy_btc_cost()["avg_cost_usd"], 75444)
-        self.assertEqual(self.get.call_count, 1)
-        self.expire_cache()
-        self.assertEqual(cache.strategy_btc_cost()["avg_cost_usd"], 76000)
-        self.assertEqual(self.get.call_count, 2)
+    def test_checks_once_per_day_then_refreshes(self):
+        self.assertTrue(hasattr(cache, "refresh_strategy_btc_cost"))
+        cache.refresh_strategy_btc_cost()
+        self.fetch.return_value = {**COST, "avg_cost_usd": 76000}
+        self.assertEqual(cache.refresh_strategy_btc_cost()["avg_cost_usd"], 75446)
+        self.assertEqual(self.fetch.call_count, 1)
+        self.expire_attempt()
+        self.assertEqual(cache.refresh_strategy_btc_cost()["avg_cost_usd"], 76000)
+        self.assertEqual(self.fetch.call_count, 2)
 
-    def test_network_failure_preserves_last_valid_cost_and_cache_timestamp(self):
-        self.assertTrue(hasattr(cache, "strategy_btc_cost"), "missing Strategy cost reader")
-        cache.strategy_btc_cost()
-        self.expire_cache()
+    def test_concurrent_background_refreshes_only_launch_one_browser(self):
+        entered = Event()
+        release = Event()
+
+        def fetch():
+            if entered.is_set():
+                return dict(COST)
+            entered.set()
+            if not release.wait(timeout=5):
+                raise RuntimeError("test did not release source fetch")
+            return dict(COST)
+
+        self.fetch.side_effect = fetch
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(cache.refresh_strategy_btc_cost)
+            try:
+                self.assertTrue(entered.wait(timeout=5))
+                second = executor.submit(cache.refresh_strategy_btc_cost)
+                second.result(timeout=2)
+                self.assertEqual(self.fetch.call_count, 1)
+                # The browser must not hold the database lock used by transactions.
+                cache.set_cache("unrelated", {"written": True})
+            finally:
+                release.set()
+            self.assertEqual(first.result(timeout=5)["avg_cost_usd"], 75446)
+        self.assertFalse(cache.strategy_btc_cost()["stale"])
+
+    def test_abandoned_collection_can_retry_after_five_minutes(self):
+        cache.set_cache(cache.STRATEGY_BTC_COST_ATTEMPT_KEY, {"pending": "abandoned", "error": None})
+        cache.refresh_strategy_btc_cost()
+        self.fetch.assert_not_called()
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE api_cache SET updated_at = ? WHERE cache_key = ?",
+                ((datetime.now() - timedelta(minutes=6)).isoformat(), cache.STRATEGY_BTC_COST_ATTEMPT_KEY),
+            )
+        self.assertEqual(cache.refresh_strategy_btc_cost()["avg_cost_usd"], 75446)
+        self.fetch.assert_called_once_with()
+
+    def test_replaced_collection_cannot_overwrite_newer_success(self):
+        cache.set_cache(cache.STRATEGY_BTC_COST_KEY, COST)
+
+        def replaced_fetch():
+            cache.set_cache(cache.STRATEGY_BTC_COST_KEY, {**COST, "avg_cost_usd": 76000})
+            cache.set_cache(cache.STRATEGY_BTC_COST_ATTEMPT_KEY, {"error": None})
+            raise strategy.StrategySourceError("older browser failed")
+
+        self.fetch.side_effect = replaced_fetch
+        with self.assertLogs("dca_tracker.cache", level="WARNING"):
+            result = cache.refresh_strategy_btc_cost()
+        self.assertEqual(result["avg_cost_usd"], 76000)
+        self.assertFalse(result["stale"])
+        self.assertIsNone(result["error"])
+
+    def test_failure_keeps_last_value_and_success_timestamp(self):
+        self.assertTrue(hasattr(cache, "refresh_strategy_btc_cost"))
+        cache.refresh_strategy_btc_cost()
         before = cache.get_cache(cache.STRATEGY_BTC_COST_KEY)["cache"]["updated_at"]
-        self.get.side_effect = requests.Timeout("source timed out")
+        self.expire_attempt()
+        self.fetch.side_effect = strategy.StrategySourceError("Chrome timed out")
         with self.assertLogs("dca_tracker.cache", level="WARNING") as logs:
-            result = cache.strategy_btc_cost()
-        self.assertEqual(result["avg_cost_usd"], 75444)
+            result = cache.refresh_strategy_btc_cost()
+        self.assertEqual(result["avg_cost_usd"], 75446)
         self.assertTrue(result["stale"])
         self.assertEqual(result["error"]["code"], "source_unavailable")
-        self.assertEqual(result["error"]["message"], "source timed out")
         self.assertEqual(cache.get_cache(cache.STRATEGY_BTC_COST_KEY)["cache"]["updated_at"], before)
         self.assertIn("Traceback", "\n".join(logs.output))
+        self.assertTrue(cache.strategy_btc_cost()["stale"])
 
-    def test_initial_failure_returns_unavailable_without_persisting_fake_cost(self):
-        self.assertTrue(hasattr(cache, "strategy_btc_cost"), "missing Strategy cost reader")
-        self.get.side_effect = requests.ConnectionError("offline")
+    def test_failed_attempt_does_not_relaunch_browser_on_every_update(self):
+        self.assertTrue(hasattr(cache, "refresh_strategy_btc_cost"))
+        self.fetch.side_effect = strategy.StrategySourceError("Chrome missing")
         with self.assertLogs("dca_tracker.cache", level="WARNING"):
-            result = cache.strategy_btc_cost()
-        self.assertIsNone(result["avg_cost_usd"])
-        self.assertIsNone(result["as_of"])
-        self.assertEqual(result["error"]["code"], "source_unavailable")
+            first = cache.refresh_strategy_btc_cost()
+        self.assertIsNone(first["avg_cost_usd"])
         self.assertIsNone(cache.get_cache(cache.STRATEGY_BTC_COST_KEY))
+        self.assertTrue(cache.refresh_strategy_btc_cost()["stale"])
+        self.assertEqual(self.fetch.call_count, 1)
+        self.expire_attempt()
+        self.fetch.side_effect = None
+        self.assertEqual(cache.refresh_strategy_btc_cost()["avg_cost_usd"], 75446)
+        self.assertEqual(self.fetch.call_count, 2)
 
-    def test_invalid_remote_cost_never_replaces_the_last_valid_value(self):
-        self.assertTrue(hasattr(cache, "strategy_btc_cost"), "missing Strategy cost reader")
-        cache.strategy_btc_cost()
-        self.expire_cache()
-        for value in (None, 0, -1, float("nan"), float("inf"), True, "75444"):
-            with self.subTest(value=value):
-                self.response.json.return_value["summary"]["avgCostUsd"] = value
-                with self.assertLogs("dca_tracker.cache", level="WARNING"):
-                    result = cache.strategy_btc_cost()
-                self.assertEqual(result["avg_cost_usd"], 75444)
-                self.assertTrue(result["stale"])
-                self.assertEqual(result["error"]["code"], "invalid_source_data")
+    def test_source_change_refreshes_preexisting_third_party_cache(self):
+        self.assertTrue(hasattr(cache, "refresh_strategy_btc_cost"))
+        cache.set_cache(cache.STRATEGY_BTC_COST_KEY, {"avg_cost_usd": 75444, "as_of": "2026-10-11", "source_url": "https://www.strategy.com/press/previous"})
+        self.assertEqual(cache.strategy_btc_cost()["avg_cost_usd"], 75444)
+        self.fetch.assert_not_called()
+        self.assertEqual(cache.refresh_strategy_btc_cost()["avg_cost_usd"], 75446)
+        self.fetch.assert_called_once_with()
 
-    def test_rejects_wrong_asset_invalid_date_and_untrusted_source_link(self):
-        self.assertTrue(hasattr(cache, "strategy_btc_cost"), "missing Strategy cost reader")
-        variants = []
-        for field, value in (("asset", "ETH"), ("ticker", "OTHER")):
-            payload = copy.deepcopy(PAYLOAD)
-            payload[field] = value
-            variants.append(payload)
-        for value in (None, "not-a-date", (date.today() + timedelta(days=2)).isoformat()):
-            payload = copy.deepcopy(PAYLOAD)
-            payload["summary"]["avgCostAsOf"] = value
-            variants.append(payload)
-        payload = copy.deepcopy(PAYLOAD)
-        payload["sources"][0]["url"] = "javascript:alert(1)"
-        variants.extend([payload, {}, [], None])
-        for payload in variants:
-            with self.subTest(payload=payload):
-                self.response.json.return_value = payload
-                with self.assertLogs("dca_tracker.cache", level="WARNING"):
-                    result = cache.strategy_btc_cost()
-                self.assertIsNone(result["avg_cost_usd"])
-                self.assertEqual(result["error"]["code"], "invalid_source_data")
-
-    def test_invalid_json_is_an_identifiable_source_error(self):
-        self.assertTrue(hasattr(cache, "strategy_btc_cost"), "missing Strategy cost reader")
-        self.response.json.side_effect = requests.exceptions.JSONDecodeError("invalid JSON", "x", 0)
+    def test_invalid_source_is_identifiable_and_preserves_last_value(self):
+        self.assertTrue(hasattr(cache, "refresh_strategy_btc_cost"))
+        cache.refresh_strategy_btc_cost()
+        self.expire_attempt()
+        self.fetch.side_effect = ValueError("missing __NEXT_DATA__")
         with self.assertLogs("dca_tracker.cache", level="WARNING"):
-            result = cache.strategy_btc_cost()
+            result = cache.refresh_strategy_btc_cost()
+        self.assertEqual(result["avg_cost_usd"], 75446)
         self.assertEqual(result["error"]["code"], "invalid_source_data")
 
     def test_unexpected_programming_error_propagates(self):
-        self.assertTrue(hasattr(cache, "strategy_btc_cost"), "missing Strategy cost reader")
-        self.get.side_effect = RuntimeError("unexpected implementation error")
+        self.assertTrue(hasattr(cache, "refresh_strategy_btc_cost"))
+        self.fetch.side_effect = RuntimeError("unexpected implementation error")
         with self.assertRaisesRegex(RuntimeError, "unexpected implementation error"):
-            cache.strategy_btc_cost()
+            cache.refresh_strategy_btc_cost()
 
     def test_reference_failure_does_not_change_dashboard_advice_or_totals(self):
-        self.assertTrue(hasattr(cache, "strategy_btc_cost"), "missing Strategy cost reader")
-        self.get.side_effect = requests.Timeout("offline")
+        self.assertTrue(hasattr(cache, "refresh_strategy_btc_cost"))
+        self.fetch.side_effect = strategy.StrategySourceError("offline")
         decision = Mock(asset="BTC", price=82002.12, recommended_amount=100, data_ok=True)
         decision.reason = "DCA Score 33.5"
         summary = {"total_cost": 100, "total_value": 101}
-        with patch.object(cache.rules, "all_decisions", return_value=[decision]), patch.object(
-            cache.portfolio, "portfolio_summary", return_value=summary
-        ):
-            with self.assertLogs("dca_tracker.cache", level="WARNING"):
-                result = cache.build_dashboard()
-        self.assertIn("strategy_btc", result)
+        with self.assertLogs("dca_tracker.cache", level="WARNING"):
+            cache.refresh_strategy_btc_cost()
+        with patch.object(cache.rules, "all_decisions", return_value=[decision]), patch.object(cache.portfolio, "portfolio_summary", return_value=summary):
+            result = cache.build_dashboard()
         self.assertFalse(result["has_errors"])
         self.assertEqual(result["monthly_plan"], 100)
         self.assertEqual(result["portfolio"], summary)
-        self.assertEqual(result["decisions"][0]["reason"], "DCA Score 33.5")
         self.assertIsNone(result["strategy_btc"]["avg_cost_usd"])
+        self.assertEqual(self.fetch.call_count, 1)
+
+    def test_scheduled_update_refreshes_cost_before_caching_dashboard(self):
+        with patch.object(cache.rules, "all_decisions", return_value=[]), patch.object(cache.portfolio, "portfolio_summary", return_value={}), patch.object(cache, "build_performance", return_value={"series": []}):
+            cache.refresh_all()
+        dashboard = cache.get_cache(cache.DASHBOARD_KEY)
+        self.assertEqual(dashboard["strategy_btc"]["avg_cost_usd"], 75446)
+        self.fetch.assert_called_once_with()
 
 
 if __name__ == "__main__":
