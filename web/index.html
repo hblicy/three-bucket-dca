@@ -81,6 +81,12 @@ function renderStrategyBtcCost(reference) {
   `;
 }
 
+function renderDecisionPrice(decision) {
+  const quote = decision.asset === "BTC" ? decision.metrics?.spot_quote : null;
+  if (!quote) return `<div class="muted">价格：${money(decision.price)}</div>`;
+  return `<div class="muted">价格：${fmt(decision.price)} USDT</div>`;
+}
+
 async function load(refresh = false) {
   const data = await api(`/api/dashboard${refresh ? "?refresh=true" : ""}`);
   $("errors").hidden = !data.has_errors;
@@ -97,7 +103,7 @@ async function load(refresh = false) {
     <div class="panel decision">
       <h2>${text(d.title)}</h2>
       <span class="tag ${text(d.status)}">${text(d.action)}</span>
-      <div class="muted">价格：${money(d.price)}</div>
+      ${renderDecisionPrice(d)}
       <div>建议金额：<strong>${money(d.recommended_amount)}</strong></div>
       <div class="muted decision-reason">${text(d.reason)}</div>
       ${d.asset === "BTC" ? renderStrategyBtcCost(data.strategy_btc) : ""}
@@ -107,8 +113,9 @@ async function load(refresh = false) {
   $("buckets").innerHTML = data.portfolio.buckets.map(x => `
     <tr><td data-label="仓位">${text(x.bucket_name)}</td><td data-label="投入">${money(x.cost)}</td><td data-label="市值">${money(x.value)}</td><td data-label="盈亏" class="${colorClass(x.pnl)}">${money(x.pnl)}</td><td data-label="收益率">${pct(x.pnl_pct)}</td></tr>
   `).join("");
+  const btcQuote = data.decisions.find(d => d.asset === "BTC")?.metrics?.spot_quote;
   $("assets").innerHTML = data.portfolio.assets.map(x => `
-    <tr><td data-label="资产">${text(x.asset)}</td><td data-label="份额">${fmt(x.shares, 6)}</td><td data-label="成本">${money(x.cost)}</td><td data-label="均价">${money(x.avg_cost)}</td><td data-label="现价">${money(x.price)}</td><td data-label="市值">${money(x.value)}</td><td data-label="盈亏" class="${colorClass(x.pnl)}">${money(x.pnl)}</td></tr>
+    <tr><td data-label="资产">${text(x.asset)}</td><td data-label="份额">${fmt(x.shares, 6)}</td><td data-label="成本">${money(x.cost)}</td><td data-label="均价">${money(x.avg_cost)}</td><td data-label="现价">${x.asset === "BTC" && btcQuote ? `${fmt(x.price)} USDT` : money(x.price)}</td><td data-label="市值">${money(x.value)}</td><td data-label="盈亏" class="${colorClass(x.pnl)}">${money(x.pnl)}</td></tr>
   `).join("");
   await loadPerformance(activePerformanceScope, refresh);
 }

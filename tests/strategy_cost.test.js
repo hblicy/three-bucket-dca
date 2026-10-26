@@ -9,7 +9,7 @@ const commonJs = fs.readFileSync(path.join(__dirname, "..", "web", "static", "co
 const pageScript = pageHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
 const loaders = pageScript.slice(0, pageScript.indexOf("function drawPerformanceChart"));
 
-async function render(reference) {
+async function render(reference, quote) {
   const elements = new Map();
   const context = vm.createContext({
     document: {
@@ -29,6 +29,7 @@ async function render(reference) {
     strategy_btc: reference,
     decisions: ["BTC", "CRCL", "QQQM", "VOO"].map(asset => ({
       asset,
+      metrics: asset === "BTC" && quote ? { spot_quote: quote } : {},
       title: asset,
       status: "buy",
       action: "正常定投",
@@ -90,4 +91,19 @@ test("previous cached disclosure preserves its original date meaning", async () 
   assert.match(html, /截至 2026-10-11/);
   assert.match(html, /Strategy 官方披露/);
   assert.doesNotMatch(html, /链研社|披露于 2026-10-11/);
+});
+
+const spotQuote = { price: 82002.12, symbol: "BTCUSDT", source: "Binance Spot", quote_asset: "USDT", updated_at: "2026-10-26T08:00:00+00:00" };
+
+test("BTC spot price uses USDT without showing source and collection details", async () => {
+  const html = await render(reference, spotQuote);
+  assert.match(html, /价格：82,002\.12 USDT/);
+  assert.doesNotMatch(html, /币安现货 BTC\/USDT|取价|2026.*10.*26.*16:00:00/);
+  assert.match(html, /价格：\$82,002\.12/);
+});
+
+test("previous cached Yahoo decisions are not relabeled as Binance quotes", async () => {
+  const html = await render(reference);
+  assert.match(html, /价格：\$82,002\.12/);
+  assert.doesNotMatch(html, /币安现货|82,002\.12 USDT/);
 });

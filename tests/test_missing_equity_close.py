@@ -15,6 +15,9 @@ from dca_tracker import performance, prices, rules
 
 class MissingEquityCloseTest(unittest.TestCase):
     def setUp(self):
+        source = patch.object(prices, "equity_quote", side_effect=lambda symbol: {"price": 82.3, "symbol": symbol, "source": "Binance Stocks", "quote_asset": "USD", "updated_at": "2026-10-26T09:00:00+00:00", "price_at": "2026-10-26T09:00:00+00:00", "session": "O"}, create=True)
+        source.start()
+        self.addCleanup(source.stop)
         self.frame = pd.DataFrame(
             {
                 "Open": [75.27, 86.35],

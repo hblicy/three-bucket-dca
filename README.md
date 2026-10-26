@@ -9,6 +9,20 @@
 - CRCL：加密金融成长仓
 - QQQM + VOO：美股长期底仓
 
+## BTC 行情口径
+
+BTC 决策卡、提醒与当前持仓估值使用币安现货 `BTCUSDT` 最新报价，接口为 `https://data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT`，无需 API Key。页面报价标明 USDT；提醒保留币安现货来源和北京时间的采集时间；后台沿用每 5 分钟刷新，页面“刷新”会重新取价，提醒发送前也单独取价。
+
+币安请求失败或响应交易对、价格异常时明确报错，不用 Yahoo 价格替代币安报价。DCA 历史指标和历史收益曲线仍使用 Yahoo BTC-USD 日线，原有分位、倍率和预算规则保持原口径。组合汇总沿用原有金额记账，BTC 的 USDT 报价按 1 USDT ≈ 1 USD 作为参考估值。
+
+## 美股行情口径
+
+CRCL、QQQM 和 VOO 的展示价、提醒价与当前持仓估值使用币安 Stocks 的原始美股代码，单位为 USD。读取[币安官方股票组件](https://www.binance.com/en/stocks-price-widget)同源的公开批量快照 `https://www.binance.com/bapi/equity/v1/public/equity/symbol/get-symbols-by-param?symbols=CRCL,QQQM,VOO`，无需 API Key 或新增依赖。按源数据的市场阶段读取盘中、盘前、盘后和可用夜盘价格，不用 QQQ、SPY 或代币化证券替代原始标的。页面只展示价格，提醒保留来源及北京时间的采集时间。
+
+同轮计算批量获取三个标的，在进程内复用 30 秒。请求超时为 10 秒；缺失或无效的标的明确报错，有效标的仍可使用同批报价。该官网公开快照没有源成交时间字段，记录的是本次取价时间，不能把 `t`（STOCK/ETF 类型）当成时间戳；官网接口结构变化会明确报错，不回退为 Yahoo 实时报价。
+
+CRCL 的 DCA 历史价格指标、QQQM 的 PE/趋势规则和历史收益曲线继续沿用现有 Yahoo 日线口径；本次切换的是当前报价，不重算历史策略。
+
 ## 配置文件
 
 本地运行和 VPS systemd 部署使用的配置模板不同：
