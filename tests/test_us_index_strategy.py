@@ -15,6 +15,11 @@ from dca_tracker.notify import is_us_index_signal_due
 
 
 class UsIndexStrategyTest(unittest.TestCase):
+    def setUp(self):
+        source = patch.object(prices, "equity_quote", side_effect=lambda symbol: {"price": 100.0, "symbol": symbol, "source": "Binance Stocks", "quote_asset": "USD", "updated_at": "2026-10-26T09:00:00+00:00", "price_at": "2026-10-26T09:00:00+00:00", "session": "O"}, create=True)
+        source.start()
+        self.addCleanup(source.stop)
+
     def qqqm_decision(self, pe: float, below_ma10m: bool):
         now = datetime(2026, 8, 15, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
         monthly_close = 99.0 if below_ma10m else 101.0
@@ -26,7 +31,7 @@ class UsIndexStrategyTest(unittest.TestCase):
         }
         with (
             patch.object(rules, "_now", return_value=now),
-            patch.object(rules.prices, "latest_price", side_effect=lambda symbol: {"price": 100.0}),
+            patch.object(rules.prices, "latest_price", side_effect=lambda symbol, **kwargs: {"price": 100.0}),
             patch.object(rules.prices, "nasdaq_pe", return_value={"pe": pe, "symbol": "QQQ", "field": "trailingPE"}),
             patch.object(rules.prices, "monthly_trend", return_value=trend),
         ):

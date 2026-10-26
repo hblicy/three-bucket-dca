@@ -162,6 +162,9 @@ def send_wework_text(content: str) -> bool:
 
 def message(decision: Decision) -> str:
     price = "-" if decision.price is None else f"${decision.price:,.2f}"
+    quote = decision.metrics.get("spot_quote") if decision.asset == "BTC" else decision.metrics.get("market_quote")
+    if quote and decision.asset == "BTC" and decision.price is not None:
+        price = f"{decision.price:,.2f} USDT"
     lines = [
         f"三仓定投提醒 - {decision.asset}",
         f">仓位：{decision.bucket_name}",
@@ -171,6 +174,14 @@ def message(decision: Decision) -> str:
         f">原因：{decision.reason}",
         f">窗口：{decision.next_window}",
     ]
+    if quote:
+        quote_time = quote["updated_at"]
+        collected_at = datetime.fromisoformat(quote_time).astimezone(ZoneInfo(BEIJING_TZ))
+        source = "币安现货 BTC/USDT" if decision.asset == "BTC" else f"币安美股 {decision.asset}"
+        lines[5:5] = [
+            f">行情来源：{source}",
+            f">取价时间：{collected_at:%Y-%m-%d %H:%M:%S} 北京时间",
+        ]
     return "\n".join(lines)
 
 

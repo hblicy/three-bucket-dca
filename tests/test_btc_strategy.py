@@ -30,6 +30,12 @@ class FakeResponse:
 
 
 class BtcStrategyTest(unittest.TestCase):
+    def setUp(self):
+        quote = {"price": 80014.0, "symbol": "BTCUSDT", "source": "Binance Spot", "quote_asset": "USDT", "updated_at": "2026-10-26T08:00:00+00:00"}
+        source = patch.object(prices, "btc_spot_quote", return_value=quote, create=True)
+        source.start()
+        self.addCleanup(source.stop)
+
     def test_score_uses_fixed_40_25_35_weights(self):
         score = prices.btc_dca_score(proxy_z=-1.0, ahr999=0.5, puell=1.5)
         self.assertEqual(score, 27.5)

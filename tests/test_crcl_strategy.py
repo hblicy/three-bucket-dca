@@ -42,6 +42,9 @@ class FakeResponse:
 class CrclStrategyTest(unittest.TestCase):
     def setUp(self):
         rules._crcl_risk_cache.update({"data": None, "timestamp": 0.0})
+        source = patch.object(rules.prices, "equity_quote", return_value={"price": 100.0, "symbol": "CRCL", "source": "Binance Stocks", "quote_asset": "USD", "updated_at": "2026-10-26T09:00:00+00:00", "price_at": "2026-10-26T09:00:00+00:00", "session": "PRE"}, create=True)
+        source.start()
+        self.addCleanup(source.stop)
 
     def decision(
         self,

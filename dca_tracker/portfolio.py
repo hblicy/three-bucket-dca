@@ -25,9 +25,9 @@ def list_transactions() -> list[dict]:
 def current_prices() -> dict[str, float | None]:
     out: dict[str, float | None] = {}
     for asset in sorted(VALID_ASSETS):
-        symbol = "BTC-USD" if asset == "BTC" else asset
         try:
-            out[asset] = float(prices.latest_price(symbol)["price"])
+            quote = prices.btc_spot_quote() if asset == "BTC" else prices.equity_quote(asset)
+            out[asset] = float(quote["price"])
         except Exception:
             out[asset] = None
     return out

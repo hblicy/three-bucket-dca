@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -76,6 +77,7 @@ def btc_decision() -> Decision:
         else:
             multiplier = 0.0
         amount = base_amount * multiplier
+        spot_quote = prices.btc_spot_quote()
         action_map = {0.0: "暂停定投", 0.5: "轻仓定投", 1.0: "正常定投", 2.0: "加速定投", 4.0: "重仓定投"}
         return Decision(
             bucket="BTC_CYCLE",
@@ -85,7 +87,7 @@ def btc_decision() -> Decision:
             status="buy" if amount > 0 else "pause",
             action=action_map.get(multiplier, "观察"),
             recommended_amount=round(amount, 2),
-            price=float(latest["Price"]),
+            price=spot_quote["price"],
             reason=f"DCA Score {score:.1f}，分位阈值 P10/P25/P50/P75={p10:.1f}/{p25:.1f}/{p50:.1f}/{p75:.1f}，倍率 {multiplier:g}x。",
             next_window="每周一 16:00 北京时间",
             schedule="weekly_monday_1600",
@@ -94,9 +96,11 @@ def btc_decision() -> Decision:
                 "multiplier": multiplier,
                 "base_amount": base_amount,
                 "thresholds": thresholds,
+                "spot_quote": spot_quote,
             },
         )
     except Exception as exc:
+        logging.getLogger(__name__).exception("BTC decision failed")
         return _error_decision("BTC_CYCLE", "BTC：周期进攻仓", "BTC", "BTC 周期进攻仓", "每周一 16:00 北京时间", str(exc))
 
 
@@ -199,6 +203,7 @@ def crcl_decision() -> Decision:
             risk_note = f"USDC 24 小时流通量增加 {-usdc_risk['drop_24h_pct']:.1f}%，未触发暂停。"
         else:
             risk_note = "USDC 24 小时流通量持平 0.0%，未触发暂停。"
+        market_quote = prices.equity_quote("CRCL")
         return Decision(
             bucket="CRCL_GROWTH",
             bucket_name="CRCL：加密金融成长仓",
@@ -207,12 +212,13 @@ def crcl_decision() -> Decision:
             status="buy" if amount > 0 else "pause",
             action="强提醒加速" if multiplier == 2 else "正常定投" if multiplier == 1 else "减量定投" if multiplier == 0.5 else "暂停定投",
             recommended_amount=round(amount, 2),
-            price=current,
+            price=market_quote["price"],
             reason=f"CRCL DCA Score {score:.1f}，价格分位 {percentile:.1f}%，MA60 偏离 {ma_dev:.1f}%，距90日高点回撤 {drawdown:.1f}%。{risk_note}",
             next_window="每周二 16:00 北京时间",
             schedule="weekly_tuesday_1600",
             metrics={
                 "score": score,
+                "market_quote": market_quote,
                 "technical_raw": technical_raw,
                 "multiplier": multiplier,
                 "base_amount": base_amount,
@@ -224,6 +230,7 @@ def crcl_decision() -> Decision:
             },
         )
     except Exception as exc:
+        logging.getLogger(__name__).exception("CRCL decision failed")
         return _error_decision("CRCL_GROWTH", "CRCL：加密金融成长仓", "CRCL", "CRCL 加密金融成长仓", "每周二 16:00 北京时间", str(exc))
 
 
@@ -241,7 +248,9 @@ def us_index_decisions() -> list[Decision]:
             base_amount = _validated_base_amount(
                 US_INDEX_MONTHLY_AMOUNT, "US_INDEX_MONTHLY_AMOUNT"
             )
-            metric = prices.latest_price(symbol)
+            market_quote = prices.equity_quote(symbol)
+            metric = prices.latest_price(symbol, quote=market_quote)
+            metric["market_quote"] = market_quote
             is_target = symbol == target
             multiplier = 0.0
             action = "非本月目标"
@@ -302,13 +311,14 @@ def us_index_decisions() -> list[Decision]:
                 status="buy" if amount > 0 else "off_cycle",
                 action=action,
                 recommended_amount=round(amount, 2),
-                price=metric["price"],
+                price=market_quote["price"],
                 reason=reason,
                 next_window=next_window,
                 schedule=schedule,
                 metrics=metric,
             ))
         except Exception as exc:
+            logging.getLogger(__name__).exception("US index decision failed: symbol=%s", symbol)
             out.append(_error_decision("US_INDEX_CORE", "QQQM + VOO：美股长期底仓", symbol, f"{symbol} 美股长期底仓", next_window, str(exc)))
     return out
 

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from numbers import Real
 from zoneinfo import ZoneInfo
@@ -18,6 +19,9 @@ from .config import ROOT
 
 # yfinance 0.2.x shares download results between callers, even with threads=False.
 _YFINANCE_DOWNLOAD_LOCK = threading.Lock()
+_BINANCE_EQUITY_LOCK = threading.Lock()
+_BINANCE_EQUITY_SYMBOLS = frozenset({"CRCL", "QQQM", "VOO"})
+_BINANCE_EQUITY_CACHE = {"quotes": {}, "errors": {}, "checked_at": None}
 YFINANCE_CACHE_DIR = ROOT / "data" / "yfinance_cache"
 YFINANCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 NASDAQ_PE_CACHE_FILE = YFINANCE_CACHE_DIR / "nasdaq_pe.json"
@@ -100,12 +104,103 @@ def _validated_close(data: pd.DataFrame, symbol: str) -> pd.Series:
     return close
 
 
-def latest_price(symbol: str) -> dict:
+def btc_spot_quote() -> dict:
+    url = "https://data-api.binance.vision/api/v3/ticker/price"
+    try:
+        response = requests.get(url, params={"symbol": "BTCUSDT"}, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or payload.get("symbol") != "BTCUSDT":
+            raise ValueError("响应交易对不是 BTCUSDT")
+        raw_price = payload.get("price")
+        price = None if isinstance(raw_price, bool) else _positive_float(raw_price)
+        if price is None:
+            raise ValueError("报价必须是有限正数")
+    except (requests.RequestException, ValueError, OverflowError) as exc:
+        logging.getLogger(__name__).warning(
+            "Binance BTCUSDT spot quote failed: source=%s", url, exc_info=True
+        )
+        raise RuntimeError(f"币安现货 BTCUSDT 报价获取失败：{exc}") from exc
+    return {
+        "price": price,
+        "symbol": "BTCUSDT",
+        "source": "Binance Spot",
+        "quote_asset": "USDT",
+        "updated_at": _utc_now().isoformat(),
+    }
+
+
+def _parse_equity_quote(row: dict) -> dict:
+    symbol = row["s"]
+    raw_price = row.get("c")
+    price = None if isinstance(raw_price, bool) else _positive_float(raw_price)
+    expected_type = "STOCK" if symbol == "CRCL" else "ETF"
+    if price is None or row.get("t") != expected_type:
+        raise ValueError(f"{symbol} 股票类型或报价无效")
+    session = row.get("mp")
+    if not isinstance(session, str) or session not in {"C", "ON", "PRE", "O", "POST"}:
+        raise ValueError(f"{symbol} 交易时段无效")
+    return {
+        "price": price,
+        "symbol": symbol,
+        "source": "Binance Stocks",
+        "quote_asset": "USD",
+        "updated_at": _utc_now().isoformat(),
+        "session": session,
+    }
+
+
+def _collect_equity_quotes() -> tuple[dict, dict]:
+    response = requests.get(
+        "https://www.binance.com/bapi/equity/v1/public/equity/symbol/get-symbols-by-param",
+        params={"symbols": ",".join(sorted(_BINANCE_EQUITY_SYMBOLS))}, timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict) or payload.get("code") != "000000" or payload.get("success") is not True or not isinstance(payload.get("data"), list):
+        raise ValueError("股票报价快照格式无效或接口返回失败")
+    quotes, errors = {}, {}
+    for row in payload["data"]:
+        if not isinstance(row, dict) or not isinstance(row.get("s"), str) or row["s"] not in _BINANCE_EQUITY_SYMBOLS:
+            continue
+        symbol = row["s"]
+        try:
+            quote = _parse_equity_quote(row)
+        except (ValueError, OverflowError) as exc:
+            errors[symbol] = exc
+            quotes.pop(symbol, None)
+        else:
+            quotes[symbol] = quote
+            errors.pop(symbol, None)
+    return quotes, errors
+
+
+def equity_quote(symbol: str) -> dict:
+    symbol = symbol.upper()
+    if symbol not in _BINANCE_EQUITY_SYMBOLS:
+        raise ValueError(f"未接入币安美股代码：{symbol}")
+    try:
+        with _BINANCE_EQUITY_LOCK:
+            checked_at = _BINANCE_EQUITY_CACHE["checked_at"]
+            if checked_at is None or not 0 <= time.monotonic() - checked_at < 30:
+                quotes, errors = _collect_equity_quotes()
+                _BINANCE_EQUITY_CACHE.update(quotes=quotes, errors=errors, checked_at=time.monotonic())
+            if symbol in _BINANCE_EQUITY_CACHE["errors"]:
+                raise _BINANCE_EQUITY_CACHE["errors"][symbol]
+            if symbol not in _BINANCE_EQUITY_CACHE["quotes"]:
+                raise ValueError(f"股票快照没有返回 {symbol} 报价")
+            return dict(_BINANCE_EQUITY_CACHE["quotes"][symbol])
+    except (requests.RequestException, ValueError, OverflowError) as exc:
+        logging.getLogger(__name__).warning("Binance equity quote failed: symbol=%s", symbol, exc_info=True)
+        raise RuntimeError(f"币安美股 {symbol} 行情获取失败：{exc}") from exc
+
+
+def latest_price(symbol: str, *, quote: dict | None = None) -> dict:
     if symbol.upper() == "BTC":
         symbol = "BTC-USD"
     data = history(symbol, period="1y")
     close = _validated_close(data, symbol)
-    current = float(close.iloc[-1])
+    current = float(quote["price"]) if quote is not None else float(close.iloc[-1])
     high = float(close.max())
     low = float(close.min())
     first = float(close.iloc[0])
