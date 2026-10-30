@@ -5,7 +5,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -124,44 +124,34 @@ class UsIndexStrategyTest(unittest.TestCase):
         self.assertFalse(is_us_index_signal_due(datetime(2027, 1, 1, 16, 0, tzinfo=tz)))
         self.assertTrue(is_us_index_signal_due(datetime(2027, 1, 4, 16, 0, tzinfo=tz)))
 
-    def test_nasdaq_pe_uses_trailing_pe_priority_only(self):
-        class FakeTicker:
-            def __init__(self, symbol):
-                self.info = {
-                    "QQQ": {"forwardPE": 20.0},
-                    "QQQM": {"trailingPE": 30.0, "forwardPE": 18.0},
-                    "^NDX": {"trailingPE": 40.0},
-                }[symbol]
-
+    def test_nasdaq_pe_preserves_official_field_instead_of_forward_pe(self):
+        item = {"symbol": "QQQ", "field": "priceToEarningsRatio", "pe": 30.0,
+                "forward_pe": 18.0, "source": "invesco", "quotes": {},
+                "as_of": datetime.now(timezone.utc).date().isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()}
         with TemporaryDirectory() as tmpdir:
             with (
-                patch.object(prices.yf, "Ticker", side_effect=FakeTicker),
+                patch.object(prices, "_fetch_invesco_pe", return_value=item),
                 patch.object(prices, "NASDAQ_PE_CACHE_FILE", Path(tmpdir) / "nasdaq_pe.json"),
             ):
                 pe = prices.nasdaq_pe()
-        self.assertEqual(pe["symbol"], "QQQM")
-        self.assertEqual(pe["field"], "trailingPE")
+        self.assertEqual(pe["symbol"], "QQQ")
+        self.assertEqual(pe["field"], "priceToEarningsRatio")
         self.assertEqual(pe["pe"], 30.0)
-        self.assertEqual(pe["quotes"]["QQQ"]["forwardPE"], 20.0)
+        self.assertEqual(pe["forward_pe"], 18.0)
 
     def test_nasdaq_pe_rejects_non_finite_trailing_pe(self):
-        class FakeTicker:
-            def __init__(self, symbol):
-                self.info = {"trailingPE": float("inf")}
-
+        response = Mock()
+        response.json.return_value = {"cusip": "46090E103", "currencyCode": "USD", "priceToEarningsRatio": float("inf")}
         with TemporaryDirectory() as tmpdir:
             with (
-                patch.object(prices.yf, "Ticker", side_effect=FakeTicker),
+                patch.object(prices.requests, "get", return_value=response),
                 patch.object(prices, "NASDAQ_PE_CACHE_FILE", Path(tmpdir) / "nasdaq_pe.json"),
             ):
                 with self.assertRaises(RuntimeError):
                     prices.nasdaq_pe()
 
     def test_nasdaq_pe_falls_back_to_last_valid_trailing_pe(self):
-        class FakeTicker:
-            def __init__(self, symbol):
-                self.info = {"forwardPE": 18.0}
-
         with TemporaryDirectory() as tmpdir:
             cache_file = Path(tmpdir) / "nasdaq_pe.json"
             cache_file.write_text(
@@ -174,7 +164,7 @@ class UsIndexStrategyTest(unittest.TestCase):
                 encoding="utf-8",
             )
             with (
-                patch.object(prices.yf, "Ticker", side_effect=FakeTicker),
+                patch.object(prices, "_fetch_invesco_pe", side_effect=ValueError("source unavailable")),
                 patch.object(prices, "NASDAQ_PE_CACHE_FILE", cache_file),
             ):
                 pe = prices.nasdaq_pe()
@@ -184,10 +174,6 @@ class UsIndexStrategyTest(unittest.TestCase):
         self.assertEqual(pe["pe"], 32.5)
 
     def test_nasdaq_pe_rejects_cache_older_than_35_days(self):
-        class FakeTicker:
-            def __init__(self, symbol):
-                self.info = {"forwardPE": 18.0}
-
         with TemporaryDirectory() as tmpdir:
             cache_file = Path(tmpdir) / "nasdaq_pe.json"
             cache_file.write_text(
@@ -200,7 +186,7 @@ class UsIndexStrategyTest(unittest.TestCase):
                 encoding="utf-8",
             )
             with (
-                patch.object(prices.yf, "Ticker", side_effect=FakeTicker),
+                patch.object(prices, "_fetch_invesco_pe", side_effect=ValueError("source unavailable")),
                 patch.object(prices, "NASDAQ_PE_CACHE_FILE", cache_file),
             ):
                 with self.assertRaises(RuntimeError):
@@ -275,12 +261,10 @@ class UsIndexStrategyTest(unittest.TestCase):
     def test_nasdaq_pe_rejects_non_numeric_live_trailing_pe_types(self):
         for invalid_pe in (True, False, "20", "20.5"):
             with self.subTest(invalid_pe=invalid_pe), TemporaryDirectory() as tmpdir:
-                class FakeTicker:
-                    def __init__(self, symbol):
-                        self.info = {"trailingPE": invalid_pe}
-
+                response = Mock()
+                response.json.return_value = {"cusip": "46090E103", "currencyCode": "USD", "priceToEarningsRatio": invalid_pe}
                 with (
-                    patch.object(prices.yf, "Ticker", side_effect=FakeTicker),
+                    patch.object(prices.requests, "get", return_value=response),
                     patch.object(
                         prices,
                         "NASDAQ_PE_CACHE_FILE",

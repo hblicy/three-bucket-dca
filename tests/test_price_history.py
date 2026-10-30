@@ -13,6 +13,11 @@ from dca_tracker import prices
 
 
 class PriceHistoryTest(unittest.TestCase):
+    def setUp(self):
+        cache = patch.dict(prices._HISTORY_CACHE, clear=True)
+        cache.start()
+        self.addCleanup(cache.stop)
+
     def overlapping_quotes(self, first_symbol, first_request, second_symbol, second_request):
         first_quote_started = Event()
         second_quote_started = Event()
@@ -21,16 +26,17 @@ class PriceHistoryTest(unittest.TestCase):
         dates = pd.date_range("2026-10-09", periods=2, freq="D", name="Date")
 
         def quote_history(ticker, **kwargs):
-            if ticker.ticker == first_symbol:
+            if ticker == first_symbol:
                 first_quote_started.set()
                 if not release_first_quote.wait(timeout=5):
                     raise RuntimeError("Timed out waiting to release first quote")
-            elif ticker.ticker == second_symbol:
+            elif ticker == second_symbol:
                 second_quote_started.set()
-            return pd.DataFrame({"Close": [quotes[ticker.ticker]] * 2}, index=dates)
+            return pd.DataFrame({"Close": [quotes[ticker]] * 2}, index=dates)
 
         with (
-            patch.object(prices.yf.Ticker, "history", new=quote_history),
+            patch.object(prices, "_fetch_fmp_history", side_effect=quote_history),
+            patch.object(prices, "_fetch_binance_history", side_effect=lambda: quote_history("BTC-USD")),
             patch.object(
                 prices,
                 "_utc_now",
@@ -76,10 +82,9 @@ class PriceHistoryTest(unittest.TestCase):
                 with self.subTest(symbol=symbol, invalid_close=invalid_close):
                     frame = pd.DataFrame({"Close": [100.0, invalid_close]}, index=dates)
                     with (
-                        patch.object(prices.yf, "download", return_value=frame),
-                        patch.object(prices.yf, "Ticker") as ticker,
+                        patch.object(prices, "_fetch_fmp_history", return_value=frame),
+                        patch.object(prices, "fmp_request", return_value=[]),
                     ):
-                        ticker.return_value.get_history_metadata.return_value = {}
                         with self.assertRaisesRegex(RuntimeError, f"Invalid latest price for {symbol}"):
                             prices.latest_price(symbol)
 
