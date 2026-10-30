@@ -151,7 +151,7 @@ class UsIndexStrategyTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     prices.nasdaq_pe()
 
-    def test_nasdaq_pe_falls_back_to_last_valid_trailing_pe(self):
+    def test_nasdaq_pe_rejects_legacy_trailing_pe_cache(self):
         with TemporaryDirectory() as tmpdir:
             cache_file = Path(tmpdir) / "nasdaq_pe.json"
             cache_file.write_text(
@@ -167,11 +167,8 @@ class UsIndexStrategyTest(unittest.TestCase):
                 patch.object(prices, "_fetch_invesco_pe", side_effect=ValueError("source unavailable")),
                 patch.object(prices, "NASDAQ_PE_CACHE_FILE", cache_file),
             ):
-                pe = prices.nasdaq_pe()
-        self.assertEqual(pe["symbol"], "QQQ")
-        self.assertEqual(pe["field"], "trailingPE")
-        self.assertEqual(pe["source"], "last_valid_trailingPE")
-        self.assertEqual(pe["pe"], 32.5)
+                with self.assertRaisesRegex(RuntimeError, "没有有效缓存"):
+                    prices.nasdaq_pe()
 
     def test_nasdaq_pe_rejects_cache_older_than_35_days(self):
         with TemporaryDirectory() as tmpdir:
@@ -180,7 +177,9 @@ class UsIndexStrategyTest(unittest.TestCase):
                 json.dumps({
                     "symbol": "QQQ",
                     "pe": 32.5,
-                    "field": "trailingPE",
+                    "field": "priceToEarningsRatio",
+                    "source": "invesco",
+                    "as_of": datetime.now(timezone.utc).date().isoformat(),
                     "updated_at": (datetime.now(timezone.utc) - timedelta(days=36)).isoformat(),
                 }),
                 encoding="utf-8",
@@ -204,7 +203,9 @@ class UsIndexStrategyTest(unittest.TestCase):
                     json.dumps({
                         "symbol": "QQQ",
                         "pe": 32.5,
-                        "field": "trailingPE",
+                        "field": "priceToEarningsRatio",
+                        "source": "invesco",
+                        "as_of": datetime.now(timezone.utc).date().isoformat(),
                         "updated_at": cached_at,
                     }),
                     encoding="utf-8",
@@ -212,12 +213,14 @@ class UsIndexStrategyTest(unittest.TestCase):
                 with patch.object(prices, "NASDAQ_PE_CACHE_FILE", cache_file):
                     self.assertIsNone(prices._read_last_valid_trailing_pe())
 
-    def test_nasdaq_pe_rejects_cache_not_marked_trailing_pe(self):
+    def test_nasdaq_pe_rejects_cache_not_marked_official_pe(self):
         for field in ("forwardPE", None):
             with self.subTest(field=field), TemporaryDirectory() as tmpdir:
                 payload = {
                     "symbol": "QQQ",
                     "pe": 30.0,
+                    "source": "invesco",
+                    "as_of": datetime.now(timezone.utc).date().isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 if field is not None:
@@ -234,7 +237,9 @@ class UsIndexStrategyTest(unittest.TestCase):
                 json.dumps({
                     "symbol": "UNKNOWN",
                     "pe": 30.0,
-                    "field": "trailingPE",
+                    "field": "priceToEarningsRatio",
+                    "source": "invesco",
+                    "as_of": datetime.now(timezone.utc).date().isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }),
                 encoding="utf-8",
@@ -250,7 +255,9 @@ class UsIndexStrategyTest(unittest.TestCase):
                     json.dumps({
                         "symbol": "QQQ",
                         "pe": invalid_pe,
-                        "field": "trailingPE",
+                        "field": "priceToEarningsRatio",
+                        "source": "invesco",
+                        "as_of": datetime.now(timezone.utc).date().isoformat(),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }),
                     encoding="utf-8",

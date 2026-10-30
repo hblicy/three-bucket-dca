@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from dca_tracker import prices
+from dca_tracker import prices, rules
 
 
 NOW = datetime(2026, 10, 30, 12, tzinfo=timezone.utc)
@@ -66,6 +66,67 @@ class OfficialPeTests(unittest.TestCase):
         self.assertEqual(result['source'], 'last_valid_official_pe')
         self.assertEqual(result['as_of'], '2026-09-30')
         self.assertEqual(result['pe'], PAYLOAD['priceToEarningsRatio'])
+
+    def test_cache_requires_official_source_symbol_and_field(self):
+        with self.request(dict(PAYLOAD)):
+            prices.nasdaq_pe()
+        original = json.loads(self.path.read_text(encoding='utf-8'))
+        for field, value in (('source', None), ('source', 'yahoo'),
+                             ('symbol', 'QQQM'), ('symbol', '^NDX'),
+                             ('field', 'trailingPE'), ('field', 'forwardPE')):
+            with self.subTest(field=field, value=value):
+                raw = json.dumps({**original, field: value})
+                self.path.write_text(raw, encoding='utf-8')
+                with patch.object(prices.requests, 'get', side_effect=requests.Timeout('offline')):
+                    with self.assertRaisesRegex(RuntimeError, '没有有效缓存'):
+                        prices.nasdaq_pe()
+                self.assertEqual(self.path.read_text(encoding='utf-8'), raw)
+
+    def test_cache_requires_valid_disclosure_date_even_if_recently_retrieved(self):
+        with self.request(dict(PAYLOAD)):
+            prices.nasdaq_pe()
+        original = json.loads(self.path.read_text(encoding='utf-8'))
+        for as_of in (None, 'invalid', '2026-10-31', '2026-09-24'):
+            with self.subTest(as_of=as_of):
+                self.path.write_text(json.dumps({**original, 'as_of': as_of}), encoding='utf-8')
+                with patch.object(prices.requests, 'get', side_effect=requests.Timeout('offline')):
+                    with self.assertRaisesRegex(RuntimeError, '没有有效缓存'):
+                        prices.nasdaq_pe()
+
+    def test_official_cache_at_35_day_disclosure_boundary_is_usable(self):
+        as_of = (NOW - timedelta(days=35)).date().isoformat()
+        with self.request({**PAYLOAD, 'effectiveDate': as_of}):
+            prices.nasdaq_pe()
+        raw = self.path.read_text(encoding='utf-8')
+        with patch.object(prices.requests, 'get', side_effect=requests.Timeout('offline')):
+            result = prices.nasdaq_pe()
+        self.assertEqual(result['source'], 'last_valid_official_pe')
+        self.assertEqual(result['as_of'], as_of)
+        self.assertEqual(self.path.read_text(encoding='utf-8'), raw)
+
+    def test_legacy_cache_cannot_generate_formal_qqqm_advice(self):
+        self.path.write_text(json.dumps({
+            'symbol': 'QQQ', 'pe': 20.0, 'field': 'trailingPE',
+            'updated_at': NOW.isoformat(),
+        }), encoding='utf-8')
+        raw = self.path.read_text(encoding='utf-8')
+        trend = {'monthly_close': 110.0, 'ma10m': 100.0,
+                 'below_ma10m': False, 'ma10m_distance_pct': 10.0}
+        with (
+            patch.object(rules, '_now', return_value=NOW),
+            patch.object(prices.requests, 'get', side_effect=requests.Timeout('offline')),
+            patch.object(prices, 'equity_quote', return_value={'price': 110.0}),
+            patch.object(prices, 'latest_price', side_effect=lambda *args, **kwargs: {'price': 110.0}),
+            patch.object(prices, 'monthly_trend', return_value=trend),
+        ):
+            decisions = {decision.asset: decision for decision in rules.us_index_decisions()}
+        self.assertFalse(decisions['QQQM'].data_ok)
+        self.assertEqual(decisions['QQQM'].status, 'error')
+        self.assertEqual(decisions['QQQM'].recommended_amount, 0.0)
+        self.assertIn('没有有效缓存', decisions['QQQM'].reason)
+        self.assertTrue(decisions['VOO'].data_ok)
+        self.assertEqual(decisions['VOO'].status, 'off_cycle')
+        self.assertEqual(self.path.read_text(encoding='utf-8'), raw)
 
     def test_retrieval_date_does_not_make_an_old_disclosure_fresh(self):
         with self.request(dict(PAYLOAD)):
