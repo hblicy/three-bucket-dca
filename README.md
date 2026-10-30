@@ -13,7 +13,7 @@
 
 BTC 决策卡、提醒与当前持仓估值使用币安现货 `BTCUSDT` 最新报价，接口为 `https://data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT`，无需 API Key。页面报价标明 USDT；提醒保留币安现货来源和北京时间的采集时间；后台沿用每 5 分钟刷新，页面“刷新”会重新取价，提醒发送前也单独取价。
 
-币安请求失败或响应交易对、价格异常时明确报错，不用 Yahoo 价格替代币安报价。DCA 历史指标和历史收益曲线仍使用 Yahoo BTC-USD 日线，原有分位、倍率和预算规则保持原口径。组合汇总沿用原有金额记账，BTC 的 USDT 报价按 1 USDT ≈ 1 USD 作为参考估值。
+币安请求失败或响应交易对、价格异常时明确报错。DCA 历史指标和历史收益曲线统一使用 `BTCUSDT` 日线，通过公共 `/api/v3/klines` 接口分页读取全部可用历史，以 UTC 划分交易日。2026-10-30 实测取得 2017-08-17 起的3362根日线；页面标明历史起点，分位按币安可用历史重新计算，不能与原 Yahoo BTC-USD 全历史分位视作相同口径。评分公式、倍率和预算规则保持不变。组合汇总继续按 1 USDT ≈ 1 USD 作为参考估值。
 
 ## 美股行情口径
 
@@ -21,7 +21,11 @@ CRCL、QQQM 和 VOO 的展示价、提醒价与当前持仓估值使用币安 St
 
 同轮计算批量获取三个标的，在进程内复用 30 秒。请求超时为 10 秒；缺失或无效的标的明确报错，有效标的仍可使用同批报价。该官网公开快照没有源成交时间字段，记录的是本次取价时间，不能把 `t`（STOCK/ETF 类型）当成时间戳；官网接口结构变化会明确报错，不回退为 Yahoo 实时报价。
 
-CRCL 的 DCA 历史价格指标、QQQM 的 PE/趋势规则和历史收益曲线继续沿用现有 Yahoo 日线口径；本次切换的是当前报价，不重算历史策略。
+CRCL、QQQM、VOO 的历史价格指标和收益曲线改用 FMP `historical-price-eod/full` 日线的 `close`，保留拆股复权、未计分红再投资的收盘价口径。使用原始标的代码，当前套餐按近5年范围读取；超出套餐范围明确报错。同一进程按标的缓存15分钟，避免仪表盘和多个收益曲线重复下载；调用方取得独立数据副本。
+
+QQQM 的 PE 来自 Invesco 官方 QQQ 基金特征接口，使用 `priceToEarningsRatio`，不使用前瞻 PE。保留25/35的分层阈值和10个月均线降档规则。页面显示官方来源及披露日期；这是基金披露数据，不是每日实时估值。披露日期超过35天或源暂不可用且没有有效缓存时，不生成 QQQM 正式建议；行情和历史收益曲线仍可独立读取。
+
+运行时不再导入 yfinance，也不访问 Yahoo。现有 `data/yfinance_cache/` 目录仅保留为已迁移 PE 与 BTC 减半状态的文件位置，无需删除或改名。切换后使用新的仪表盘与收益曲线缓存键，保留旧缓存和所有交易记录，不将旧 Yahoo 结果当作新来源的实时结果。
 
 ## 配置文件
 
@@ -40,6 +44,7 @@ CRCL 的 DCA 历史价格指标、QQQM 的 PE/趋势规则和历史收益曲线�
 ```env
 DCA_WRITE_TOKEN=change-me
 DCA_READ_TOKEN=
+FMP_API_KEY=你的FMP_API_Key
 WEWORK_BOT_WEBHOOK=https://example.com/CHANGE_ME
 DCA_DB_PATH=data/dca_tracker.db
 DCA_HOST=127.0.0.1
@@ -54,6 +59,7 @@ DCA_UPDATE_MIGRATE_LEGACY=false
 
 - `DCA_WRITE_TOKEN`：新增、编辑、删除交易时需要输入。部署前必须改成强随机值。
 - `DCA_READ_TOKEN`：可选。为空时读接口开放；配置后前端会提示输入读 token。
+- `FMP_API_KEY`：美股历史行情必需，可复用 AIStockRadar 已验证的 Starter Key。生产配置写入 `three-bucket-dca.env`，不要覆盖现有Token、预算和数据库路径。
 - `WEWORK_BOT_WEBHOOK`：企业微信机器人 webhook。
 - `DCA_UPDATE_MIGRATE_LEGACY`：默认 `false`。定时更新不重复迁移旧库，避免覆盖三仓里已编辑的记录。
 
@@ -74,6 +80,8 @@ http://127.0.0.1:8020
 ```
 
 ## VPS Linux 部署
+
+现有97服务器升级时，先停止服务及更新定时器，对代码和数据库做备份，再应用增量补丁；不要重新运行旧库迁移或覆盖环境模板。把 `FMP_API_KEY` 加入现有的 `/home/ubuntu/three-bucket-dca/three-bucket-dca.env` 后，再启动服务和定时器。当前报价仍用币安，美股日线用 FMP，QQQ PE 用 Invesco；无需52机器代理，也不需要改域名、Nginx或数据库表结构。
 
 推荐部署目录：
 

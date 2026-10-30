@@ -12,6 +12,20 @@ from dca_tracker import cache, db
 
 
 class CacheFreshnessTest(unittest.TestCase):
+    def test_source_switch_ignores_fresh_yahoo_cache_without_deleting_it(self):
+        with TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            with patch.object(db, "DB_PATH", Path(tmpdir) / "dca.db"):
+                db.init_db()
+                with db.connect() as conn:
+                    conn.execute("INSERT INTO api_cache(cache_key, payload, updated_at) VALUES (?, ?, ?)",
+                                 ("dashboard", json.dumps({"decisions": [{"recommended_amount": 999}]}), datetime.now().isoformat()))
+                with patch.object(cache, "build_dashboard", return_value={"decisions": []}) as build:
+                    result = app.dashboard(None, False)
+                build.assert_called_once_with()
+                self.assertEqual(result["decisions"], [])
+                with db.connect() as conn:
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM api_cache WHERE cache_key='dashboard'").fetchone()[0], 1)
+
     def test_dashboard_rebuilds_instead_of_returning_stale_formal_advice(self):
         with TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = Path(tmpdir) / "data" / "dca_tracker.db"

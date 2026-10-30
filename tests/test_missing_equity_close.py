@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from datetime import date, datetime, timezone
 from threading import Event
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
@@ -31,15 +31,16 @@ class MissingEquityCloseTest(unittest.TestCase):
         )
         self.metadata = {
             "symbol": "CRCL",
-            "regularMarketPrice": 82.22,
-            "regularMarketTime": int(datetime(2026, 10, 16, 20, tzinfo=timezone.utc).timestamp()),
-            "exchangeTimezoneName": "America/New_York",
+            "price": 82.22,
+            "timestamp": int(datetime(2026, 10, 16, 20, tzinfo=timezone.utc).timestamp()),
         }
         patches = ExitStack()
         self.addCleanup(patches.close)
-        self.download = patches.enter_context(patch.object(prices.yf, "download", return_value=self.frame))
-        self.ticker = patches.enter_context(patch.object(prices.yf, "Ticker"))
-        self.quote = self.ticker.return_value.get_history_metadata
+        patches.enter_context(patch.dict(prices._HISTORY_CACHE, clear=True))
+        self.download = patches.enter_context(patch.object(prices, "_fetch_fmp_history", return_value=self.frame))
+        self.quote = Mock()
+        self.ticker = self.quote
+        patches.enter_context(patch.object(prices, "fmp_request", side_effect=lambda path, params: [self.quote()]))
         self.quote.return_value = self.metadata
         self.now = patches.enter_context(patch.object(
             prices, "_utc_now", return_value=datetime(2026, 10, 17, 1, 30, tzinfo=timezone.utc),
@@ -48,7 +49,7 @@ class MissingEquityCloseTest(unittest.TestCase):
     def test_missing_latest_close_uses_same_day_quote_for_each_equity(self):
         for symbol, expected_price in (("CRCL", 82.22), ("QQQM", 292.26), ("VOO", 701.61)):
             with self.subTest(symbol=symbol):
-                self.quote.return_value = self.metadata | {"symbol": symbol, "regularMarketPrice": expected_price}
+                self.quote.return_value = self.metadata | {"symbol": symbol, "price": expected_price}
                 with self.assertLogs("dca_tracker.prices", level="WARNING") as logs:
                     result = prices.latest_price(symbol)
                 self.assertEqual(result["price"], expected_price)
@@ -82,14 +83,13 @@ class MissingEquityCloseTest(unittest.TestCase):
     def test_invalid_quote_prices_are_rejected(self):
         for value in (None, np.nan, np.inf, -np.inf, 0.0, -1.0, True, "82.22"):
             with self.subTest(value=value):
-                self.quote.return_value = self.metadata | {"regularMarketPrice": value}
+                self.quote.return_value = self.metadata | {"price": value}
                 with self.assertRaisesRegex(RuntimeError, "CRCL"):
                     prices.latest_price("CRCL")
 
-    def test_missing_or_wrong_quote_identity_and_timezone_are_rejected(self):
+    def test_missing_or_wrong_quote_identity_is_rejected(self):
         for field, value in (
             ("symbol", None), ("symbol", "QQQM"),
-            ("exchangeTimezoneName", None), ("exchangeTimezoneName", "Unknown/Zone"),
         ):
             with self.subTest(field=field, value=value):
                 self.quote.return_value = self.metadata | {field: value}
@@ -99,7 +99,7 @@ class MissingEquityCloseTest(unittest.TestCase):
     def test_invalid_quote_timestamps_are_rejected(self):
         for value in (None, True, "1792180800", 0, -1, np.nan, np.inf, 1e30):
             with self.subTest(value=value):
-                self.quote.return_value = self.metadata | {"regularMarketTime": value}
+                self.quote.return_value = self.metadata | {"timestamp": value}
                 with self.assertRaisesRegex(RuntimeError, "CRCL"):
                     prices.latest_price("CRCL")
 
@@ -110,13 +110,13 @@ class MissingEquityCloseTest(unittest.TestCase):
             datetime(2026, 10, 17, 20, tzinfo=timezone.utc),
         ):
             with self.subTest(timestamp=timestamp):
-                self.quote.return_value = self.metadata | {"regularMarketTime": int(timestamp.timestamp())}
+                self.quote.return_value = self.metadata | {"timestamp": int(timestamp.timestamp())}
                 with self.assertRaisesRegex(RuntimeError, "CRCL"):
                     prices.latest_price("CRCL")
 
     def test_date_matching_uses_the_exchange_timezone(self):
         timestamp = datetime(2026, 10, 17, 0, 30, tzinfo=timezone.utc)
-        self.metadata["regularMarketTime"] = int(timestamp.timestamp())
+        self.metadata["timestamp"] = int(timestamp.timestamp())
         with self.assertLogs("dca_tracker.prices", level="WARNING"):
             self.assertEqual(prices.latest_price("CRCL")["price"], 82.22)
 
@@ -165,7 +165,7 @@ class MissingEquityCloseTest(unittest.TestCase):
                 self.assertTrue(metadata_started.wait(timeout=5))
                 second = executor.submit(other_quote)
                 self.assertTrue(second_requested.wait(timeout=5))
-                self.assertFalse(second_download_started.wait(timeout=0.25))
+                self.assertTrue(second_download_started.wait(timeout=0.25))
             finally:
                 release_metadata.set()
             self.assertEqual(first.result(timeout=5)["price"], 82.22)
@@ -179,7 +179,7 @@ class MissingEquityCloseTest(unittest.TestCase):
             self.assertEqual(decision.recommended_amount, 0.0)
 
     def test_btc_missing_close_is_not_repaired_with_equity_metadata(self):
-        with self.assertRaisesRegex(RuntimeError, "Invalid latest price for BTC-USD"):
+        with patch.object(prices, "_fetch_binance_history", return_value=self.frame), self.assertRaisesRegex(RuntimeError, "Invalid latest price for BTCUSDT"):
             prices.latest_price("BTC")
         self.ticker.assert_not_called()
 

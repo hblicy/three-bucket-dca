@@ -10,7 +10,7 @@ from . import performance, portfolio, rules, strategy
 from .db import connect, write_lock
 
 
-DASHBOARD_KEY = "dashboard"
+DASHBOARD_KEY = "dashboard:fmp-binance-invesco:v1"
 DASHBOARD_CACHE_MAX_AGE = timedelta(minutes=15)
 STRATEGY_BTC_COST_KEY = "strategy_btc_cost"
 STRATEGY_BTC_COST_MAX_AGE = timedelta(days=1)
@@ -152,4 +152,4 @@ def _performance_error_payload(scope: str, exc: Exception) -> dict:
 
 
 def performance_key(scope: str) -> str:
-    return f"performance:{scope.upper()}"
+    return f"performance:fmp-binance:v1:{scope.upper()}"

@@ -143,7 +143,7 @@ class BtcStrategyTest(unittest.TestCase):
         for invalid_close in (np.nan, np.inf, -np.inf, 0.0, -1.0):
             with self.subTest(invalid_close=invalid_close):
                 frame = pd.DataFrame({"Date": dates, "Close": [100_000.0, invalid_close]})
-                with patch.object(prices.yf, "download", return_value=frame):
+                with patch.object(prices, "_cached_history", return_value=frame.set_index("Date")):
                     with self.assertRaises(RuntimeError):
                         prices.btc_history()
 
@@ -154,7 +154,7 @@ class BtcStrategyTest(unittest.TestCase):
             "Close": [99_000.0, 100_000.0],
         })
         with (
-            patch.object(prices.yf, "download", return_value=frame),
+            patch.object(prices, "_cached_history", return_value=frame.set_index("Date")),
             patch.object(prices, "_utc_now", return_value=observed_at),
         ):
             with self.assertRaises(RuntimeError):
@@ -167,7 +167,7 @@ class BtcStrategyTest(unittest.TestCase):
             index=pd.to_datetime(["2026-08-01", "2026-08-02"]),
         )
         with (
-            patch.object(prices.yf, "download", return_value=frame),
+            patch.object(prices, "_cached_history", return_value=frame),
             patch.object(prices, "_utc_now", return_value=observed_at),
         ):
             with self.assertRaises(RuntimeError):

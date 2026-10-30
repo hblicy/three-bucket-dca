@@ -12,70 +12,174 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 import requests
-import yfinance as yf
 
-from .config import ROOT
+from .config import ROOT, FMP_API_KEY
 
 
-# yfinance 0.2.x shares download results between callers, even with threads=False.
-_YFINANCE_DOWNLOAD_LOCK = threading.Lock()
+_HISTORY_LOCK = threading.Lock()
+_HISTORY_FETCH_LOCKS: dict[str, threading.Lock] = {}
+_HISTORY_CACHE: dict[str, tuple[float, pd.DataFrame]] = {}
+_HISTORY_TTL_SECONDS = 15 * 60
 _BINANCE_EQUITY_LOCK = threading.Lock()
 _BINANCE_EQUITY_SYMBOLS = frozenset({"CRCL", "QQQM", "VOO"})
 _BINANCE_EQUITY_CACHE = {"quotes": {}, "errors": {}, "checked_at": None}
-YFINANCE_CACHE_DIR = ROOT / "data" / "yfinance_cache"
-YFINANCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-NASDAQ_PE_CACHE_FILE = YFINANCE_CACHE_DIR / "nasdaq_pe.json"
+# Retain the existing directory so migrated PE and halving state remain readable.
+MARKET_CACHE_DIR = ROOT / "data" / "yfinance_cache"
+MARKET_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+NASDAQ_PE_CACHE_FILE = MARKET_CACHE_DIR / "nasdaq_pe.json"
 NASDAQ_PE_CACHE_MAX_AGE = timedelta(days=35)
+INVESCO_QQQ_PE_URL = (
+    "https://dng-api.invesco.com/cache/v1/accounts/en_US/shareclasses/46090E103"
+    "?expand=nav&idType=cusip&variationType=fundCharacteristics&productType=ETF"
+)
 BTC_PRICE_MAX_AGE = timedelta(days=2)
 US_EQUITY_PRICE_MAX_AGE = timedelta(days=4)
-BTC_HALVING_CACHE_FILE = YFINANCE_CACHE_DIR / "btc_halving.json"
+BTC_HALVING_CACHE_FILE = MARKET_CACHE_DIR / "btc_halving.json"
 BTC_HALVING_CACHE_MAX_AGE = timedelta(hours=6)
 BTC_HALVING_NEAR_TARGET_BLOCKS = 144
 BTC_HALVING_NEAR_CACHE_MAX_AGE = timedelta(minutes=1)
 BTC_HALVING_FINALITY_CONFIRMATIONS = 6
-try:
-    yf.set_tz_cache_location(str(YFINANCE_CACHE_DIR))
-except AttributeError:
-    pass
 
 
-def _flatten(data: pd.DataFrame) -> pd.DataFrame:
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = data.columns.get_level_values(0)
-    return data
+def fmp_request(path: str, params: dict) -> list:
+    if not FMP_API_KEY:
+        raise RuntimeError("FMP_API_KEY 未配置，无法读取美股历史行情")
+    try:
+        response = requests.get(f"https://financialmodelingprep.com/stable/{path}",
+                                params={**params, "apikey": FMP_API_KEY}, timeout=20)
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        safe_cause = RuntimeError(f"{type(exc).__name__}: {str(exc).replace(FMP_API_KEY, '[REDACTED]')}")
+        raise RuntimeError(f"FMP {path} {params.get('symbol')}: {type(exc).__name__}") from safe_cause
+    if not isinstance(payload, list) or not payload:
+        raise RuntimeError(f"FMP {path} {params.get('symbol')}: 数据为空或接口返回错误")
+    return payload
+
+
+def _fetch_fmp_history(symbol: str) -> pd.DataFrame:
+    today = _utc_now().date()
+    earliest = (pd.Timestamp(today) - pd.DateOffset(years=5)).date()
+    rows = fmp_request("historical-price-eod/full", {"symbol": symbol, "from": str(earliest), "to": str(today)})
+    normalized = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("symbol") != symbol:
+            raise RuntimeError(f"FMP {symbol}: 历史行情代码不匹配")
+        try:
+            day = datetime.strptime(row["date"], "%Y-%m-%d").date()
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError(f"FMP {symbol}: 历史行情日期无效") from exc
+        if day > today or isinstance(row.get("close"), bool):
+            raise RuntimeError(f"FMP {symbol}: 历史行情日期或收盘价无效")
+        normalized.append({"Date": day, **{target: row.get(source) for source, target in
+                           (("open", "Open"), ("high", "High"), ("low", "Low"), ("close", "Close"), ("volume", "Volume"))}})
+    frame = pd.DataFrame(normalized).set_index("Date").sort_index()
+    frame.index = pd.DatetimeIndex(frame.index, name="Date")
+    if frame.index.has_duplicates:
+        raise RuntimeError(f"FMP {symbol}: 历史行情日期重复")
+    for column in frame:
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    if any(not np.isfinite(frame[column].to_numpy()).all() for column in ("Open", "High", "Low", "Volume")):
+        raise RuntimeError(f"FMP {symbol}: 历史 OHLCV 数据无效")
+    return frame
+
+
+def _fetch_binance_history() -> pd.DataFrame:
+    end = int(_utc_now().timestamp() * 1000)
+    cursor = int(datetime(2011, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    records = []
+    while cursor <= end:
+        try:
+            response = requests.get("https://data-api.binance.vision/api/v3/klines", params={
+                "symbol": "BTCUSDT", "interval": "1d", "startTime": cursor, "endTime": end, "limit": 1000,
+            }, timeout=20)
+            response.raise_for_status()
+            rows = response.json()
+        except (requests.RequestException, ValueError) as exc:
+            raise RuntimeError(f"Binance BTCUSDT 历史日线下载失败：{type(exc).__name__}") from exc
+        if not isinstance(rows, list):
+            raise RuntimeError("Binance BTCUSDT 历史日线响应格式无效")
+        if not rows:
+            break
+        for row in rows:
+            if not isinstance(row, list) or len(row) < 7:
+                raise RuntimeError("Binance BTCUSDT K线字段不足")
+            stamp = _positive_real(row[0])
+            if stamp is None or stamp < cursor or stamp > end or stamp % 86_400_000:
+                raise RuntimeError("Binance BTCUSDT K线日期无效或分页未前进")
+            values = [None if isinstance(value, bool) else _positive_float(value) for value in row[1:5]]
+            try:
+                volume = float(row[5])
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("Binance BTCUSDT K线成交量无效") from exc
+            if any(value is None for value in values) or not np.isfinite(volume) or volume < 0:
+                raise RuntimeError("Binance BTCUSDT K线价格或成交量无效")
+            if records and stamp != records[-1][0] + 86_400_000:
+                raise RuntimeError("Binance BTCUSDT K线日期缺失、重复或倒序")
+            records.append((int(stamp), *values, volume))
+        cursor = records[-1][0] + 86_400_000
+        if len(rows) < 1000:
+            break
+    if not records:
+        raise RuntimeError("Binance BTCUSDT 历史日线为空")
+    frame = pd.DataFrame(records, columns=["Date", "Open", "High", "Low", "Close", "Volume"])
+    frame["Date"] = pd.to_datetime(frame["Date"], unit="ms", utc=True).dt.tz_localize(None)
+    return frame.set_index("Date")
+
+
+def _cached_history(symbol: str) -> pd.DataFrame:
+    with _HISTORY_LOCK:
+        lock = _HISTORY_FETCH_LOCKS.setdefault(symbol, threading.Lock())
+    with lock:
+        cached = _HISTORY_CACHE.get(symbol)
+        if cached is not None and 0 <= time.monotonic() - cached[0] < _HISTORY_TTL_SECONDS:
+            return cached[1].copy()
+        data = _fetch_binance_history() if symbol == "BTCUSDT" else _fetch_fmp_history(symbol)
+        if data.empty or "Close" not in data:
+            raise RuntimeError(f"No price history for {symbol}")
+        if symbol in _BINANCE_EQUITY_SYMBOLS and pd.isna(data["Close"].iloc[-1]):
+            data = _fill_missing_latest_equity_close(data, symbol)
+        if _positive_float(data["Close"].iloc[-1]) is None:
+            raise RuntimeError(f"Invalid latest price for {symbol}")
+        _validated_close(data, symbol)
+        _validate_latest_price_date(data.index[-1], symbol, BTC_PRICE_MAX_AGE if symbol == "BTCUSDT" else US_EQUITY_PRICE_MAX_AGE)
+        _HISTORY_CACHE[symbol] = (time.monotonic(), data.copy())
+        return data
 
 
 def history(symbol: str, period: str = "1y", start: str | None = None) -> pd.DataFrame:
-    with _YFINANCE_DOWNLOAD_LOCK:
-        if start:
-            data = yf.download(symbol, start=start, auto_adjust=False, progress=False, threads=False, timeout=20)
-        else:
-            data = yf.download(symbol, period=period, auto_adjust=False, progress=False, threads=False, timeout=20)
-    data = _flatten(data)
+    source_symbol = "BTCUSDT" if symbol.upper() in {"BTC", "BTC-USD", "BTCUSDT"} else symbol.upper()
+    data = _cached_history(source_symbol)
     if data.empty or "Close" not in data:
         raise RuntimeError(f"No price history for {symbol}")
-    if symbol.upper() in {"CRCL", "QQQM", "VOO"} and pd.isna(data["Close"].iloc[-1]):
-        data = _fill_missing_latest_equity_close(data, symbol)
     if _positive_float(data["Close"].iloc[-1]) is None:
         raise RuntimeError(f"Invalid latest price for {symbol}")
-    max_age = BTC_PRICE_MAX_AGE if symbol.upper() in {"BTC", "BTC-USD"} else US_EQUITY_PRICE_MAX_AGE
+    max_age = BTC_PRICE_MAX_AGE if source_symbol == "BTCUSDT" else US_EQUITY_PRICE_MAX_AGE
     _validate_latest_price_date(data.index[-1], symbol, max_age)
-    return data.dropna(subset=["Close"])
+    _validated_close(data, symbol)
+    if start:
+        lower = pd.Timestamp(start)
+        if source_symbol != "BTCUSDT" and lower < pd.Timestamp(_utc_now().date()) - pd.DateOffset(years=5):
+            raise RuntimeError(f"FMP {symbol}: 请求超出当前套餐5年历史范围")
+    else:
+        if period not in {"1y", "5y"}:
+            raise ValueError(f"Unsupported history period: {period}")
+        lower = pd.Timestamp(_utc_now().date()) - pd.DateOffset(years=int(period[:-1]))
+    return data.loc[data.index >= lower].dropna(subset=["Close"]).copy()
 
 
 def _fill_missing_latest_equity_close(data: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    # Metadata lookup may call Ticker.history(), which also touches yfinance's shared state.
-    with _YFINANCE_DOWNLOAD_LOCK:
-        metadata = yf.Ticker(symbol).get_history_metadata()
+    rows = fmp_request("quote", {"symbol": symbol})
+    metadata = rows[0] if len(rows) == 1 else None
     error = f"Invalid latest price for {symbol}"
     if not isinstance(metadata, dict) or metadata.get("symbol") != symbol.upper():
         raise RuntimeError(f"{error}: missing or mismatched quote symbol")
-    price = _positive_real(metadata.get("regularMarketPrice"))
-    timestamp = _positive_real(metadata.get("regularMarketTime"))
+    price = _positive_real(metadata.get("price"))
+    timestamp = _positive_real(metadata.get("timestamp"))
     if price is None or timestamp is None:
         raise RuntimeError(f"{error}: invalid quote price or timestamp")
     try:
-        exchange_tz = ZoneInfo(metadata["exchangeTimezoneName"])
+        exchange_tz = ZoneInfo("America/New_York")
         quote_time = pd.to_datetime(timestamp, unit="s", utc=True)
         latest = pd.Timestamp(data.index[-1])
         latest_date = latest.tz_convert(exchange_tz).date() if latest.tzinfo else latest.date()
@@ -87,7 +191,7 @@ def _fill_missing_latest_equity_close(data: pd.DataFrame, symbol: str) -> pd.Dat
     repaired = data.copy()
     repaired.iloc[-1, repaired.columns.get_loc("Close")] = price
     logging.getLogger(__name__).warning(
-        "Filled missing Close for %s on %s from Yahoo regularMarketPrice=%s at %s",
+        "Filled missing Close for %s on %s from FMP quote price=%s at %s",
         symbol, latest_date.isoformat(), price, quote_time.isoformat(),
     )
     return repaired
@@ -196,8 +300,8 @@ def equity_quote(symbol: str) -> dict:
 
 
 def latest_price(symbol: str, *, quote: dict | None = None) -> dict:
-    if symbol.upper() == "BTC":
-        symbol = "BTC-USD"
+    if symbol.upper() in {"BTC", "BTC-USD", "BTCUSDT"}:
+        symbol = "BTCUSDT"
     data = history(symbol, period="1y")
     close = _validated_close(data, symbol)
     current = float(quote["price"]) if quote is not None else float(close.iloc[-1])
@@ -254,7 +358,7 @@ def _read_last_valid_trailing_pe() -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(data, dict) or (
-        data.get("field") != "trailingPE"
+        data.get("field") not in {"trailingPE", "priceToEarningsRatio"}
         or data.get("symbol") not in {"QQQ", "QQQM", "^NDX"}
     ):
         return None
@@ -267,14 +371,23 @@ def _read_last_valid_trailing_pe() -> dict | None:
         return None
     if cached_at.tzinfo is None:
         cached_at = cached_at.replace(tzinfo=timezone.utc)
-    age = datetime.now(timezone.utc) - cached_at.astimezone(timezone.utc)
+    age = _utc_now() - cached_at.astimezone(timezone.utc)
     if age < timedelta(0) or age > NASDAQ_PE_CACHE_MAX_AGE:
         return None
+    if data.get("field") == "priceToEarningsRatio":
+        try:
+            _validate_invesco_pe_date(data.get("as_of"))
+        except ValueError:
+            return None
+        if data.get("source") != "invesco" or data.get("symbol") != "QQQ":
+            return None
     return {
         "symbol": data.get("symbol") or "unknown",
         "pe": pe,
-        "field": "trailingPE",
-        "source": "last_valid_trailingPE",
+        "field": data["field"],
+        "source": "last_valid_official_pe" if data["field"] == "priceToEarningsRatio" else "last_valid_trailingPE",
+        "as_of": data.get("as_of"),
+        "source_url": data.get("source_url"),
         "cached_at": data["updated_at"],
     }
 
@@ -283,45 +396,56 @@ def _write_last_valid_trailing_pe(item: dict) -> None:
     payload = {
         "symbol": item["symbol"],
         "pe": item["pe"],
-        "field": "trailingPE",
+        "field": item["field"],
         "updated_at": item["updated_at"],
+        "source": item.get("source"),
+        "as_of": item.get("as_of"),
+        "source_url": item.get("source_url"),
     }
+    NASDAQ_PE_CACHE_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def _validate_invesco_pe_date(value) -> str:
     try:
-        NASDAQ_PE_CACHE_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    except OSError:
-        pass
+        day = datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invesco QQQ PE 披露日期无效") from exc
+    age = _utc_now().date() - day
+    if age < timedelta(0) or age > NASDAQ_PE_CACHE_MAX_AGE:
+        raise ValueError(f"Invesco QQQ PE 披露日期超出35天有效期：{day}")
+    return day.isoformat()
+
+
+def _fetch_invesco_pe() -> dict:
+    response = requests.get(INVESCO_QQQ_PE_URL, timeout=20)
+    response.raise_for_status()
+    data = response.json()
+    if not isinstance(data, dict) or data.get("cusip") != "46090E103" or data.get("currencyCode") != "USD":
+        raise ValueError("Invesco QQQ PE 基金身份不匹配")
+    pe = _positive_real(data.get("priceToEarningsRatio"))
+    if pe is None:
+        raise ValueError("Invesco QQQ 官方 PE 缺失或无效，不使用前瞻 PE 替代")
+    as_of = _validate_invesco_pe_date(data.get("priceToEarningsRatioEffectiveDate") or data.get("effectiveDate"))
+    return {
+        "symbol": "QQQ", "field": "priceToEarningsRatio", "pe": pe,
+        "source": "invesco", "as_of": as_of, "source_url": INVESCO_QQQ_PE_URL,
+        "forward_pe": _positive_real(data.get("forwardPriceToEarningsRatio")), "quotes": {},
+        "updated_at": _utc_now().isoformat(timespec="seconds"),
+    }
 
 
 def nasdaq_pe() -> dict:
-    errors = []
-    quotes = {}
-    for symbol in ["QQQ", "QQQM", "^NDX"]:
-        try:
-            info = yf.Ticker(symbol).info or {}
-            trailing_pe = _positive_real(info.get("trailingPE"))
-            forward_pe = _positive_float(info.get("forwardPE"))
-            quotes[symbol] = {"trailingPE": trailing_pe, "forwardPE": forward_pe}
-            if trailing_pe is not None:
-                item = {
-                    "symbol": symbol,
-                    "pe": trailing_pe,
-                    "field": "trailingPE",
-                    "source": "live",
-                    "forward_pe": forward_pe,
-                    "quotes": quotes,
-                    "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                }
-                _write_last_valid_trailing_pe(item)
-                return item
-        except Exception as exc:
-            errors.append(f"{symbol}: {exc}")
-    cached = _read_last_valid_trailing_pe()
-    if cached:
-        cached["forward_pe"] = None
-        cached["quotes"] = quotes
-        cached["updated_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-        return cached
-    raise RuntimeError("No Nasdaq trailingPE from yfinance" + (f" ({'; '.join(errors)})" if errors else ""))
+    try:
+        item = _fetch_invesco_pe()
+    except (requests.RequestException, ValueError) as exc:
+        logging.getLogger(__name__).warning("Invesco QQQ PE unavailable: source=%s", INVESCO_QQQ_PE_URL, exc_info=True)
+        cached = _read_last_valid_trailing_pe()
+        if cached:
+            cached.update({"forward_pe": None, "quotes": {}, "updated_at": _utc_now().isoformat(timespec="seconds")})
+            return cached
+        raise RuntimeError("Invesco QQQ 官方 PE 不可用，且没有有效缓存") from exc
+    _write_last_valid_trailing_pe(item)
+    return item
 
 
 def monthly_trend(symbol: str, months: int = 10) -> dict:
@@ -342,9 +466,7 @@ def monthly_trend(symbol: str, months: int = 10) -> dict:
 
 
 def btc_history() -> pd.DataFrame:
-    with _YFINANCE_DOWNLOAD_LOCK:
-        df = yf.download("BTC-USD", start="2011-01-01", interval="1d", auto_adjust=False, progress=False, threads=False, timeout=30)
-    df = _flatten(df).reset_index()
+    df = _cached_history("BTCUSDT").reset_index()
     if df.empty:
         raise RuntimeError("BTC price data is empty")
     if "Close" not in df or _positive_float(df["Close"].iloc[-1]) is None:
@@ -354,6 +476,8 @@ def btc_history() -> pd.DataFrame:
     _validate_latest_price_date(df["Date"].iloc[-1], "BTC", BTC_PRICE_MAX_AGE)
     df["Date"] = pd.to_datetime(df["Date"]).dt.tz_localize(None)
     df["Price"] = pd.to_numeric(df["Close"], errors="coerce")
+    df.attrs.update({"source": "Binance Spot", "symbol": "BTCUSDT", "quote_asset": "USDT",
+                     "history_start": df["Date"].iloc[0].date().isoformat()})
     return df.dropna(subset=["Price"])
 
 

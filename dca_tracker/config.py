@@ -26,6 +26,7 @@ BACKUP_DIR = ROOT / "backups"
 BACKUP_KEEP = int(os.environ.get("DCA_BACKUP_KEEP", "30"))
 WRITE_TOKEN = os.environ.get("DCA_WRITE_TOKEN", "")
 READ_TOKEN = os.environ.get("DCA_READ_TOKEN", "")
+FMP_API_KEY = os.environ.get("FMP_API_KEY", "").strip()
 WEWORK_BOT_WEBHOOK = os.environ.get("WEWORK_BOT_WEBHOOK", "")
 HOST = os.environ.get("DCA_HOST", "127.0.0.1")
 PORT = int(os.environ.get("DCA_PORT", "8020"))

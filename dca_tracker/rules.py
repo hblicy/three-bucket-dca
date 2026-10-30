@@ -88,7 +88,8 @@ def btc_decision() -> Decision:
             action=action_map.get(multiplier, "观察"),
             recommended_amount=round(amount, 2),
             price=spot_quote["price"],
-            reason=f"DCA Score {score:.1f}，分位阈值 P10/P25/P50/P75={p10:.1f}/{p25:.1f}/{p50:.1f}/{p75:.1f}，倍率 {multiplier:g}x。",
+            reason=f"DCA Score {score:.1f}，分位阈值 P10/P25/P50/P75={p10:.1f}/{p25:.1f}/{p50:.1f}/{p75:.1f}，倍率 {multiplier:g}x。"
+                   + (f"BTCUSDT 历史始于 {df.attrs['history_start']}，按币安可用历史计算分位。" if df.attrs.get("history_start") else ""),
             next_window="每周一 16:00 北京时间",
             schedule="weekly_monday_1600",
             metrics={
@@ -97,6 +98,9 @@ def btc_decision() -> Decision:
                 "base_amount": base_amount,
                 "thresholds": thresholds,
                 "spot_quote": spot_quote,
+                "history_source": df.attrs.get("source"),
+                "history_start": df.attrs.get("history_start"),
+                "history_quote_asset": df.attrs.get("quote_asset"),
             },
         )
     except Exception as exc:
@@ -284,6 +288,8 @@ def us_index_decisions() -> list[Decision]:
                     "nasdaq_pe_symbol": pe_metric["symbol"],
                     "nasdaq_pe_field": pe_metric["field"],
                     "nasdaq_pe_source": pe_metric.get("source", "live"),
+                    "nasdaq_pe_as_of": pe_metric.get("as_of"),
+                    "nasdaq_pe_source_url": pe_metric.get("source_url"),
                     "nasdaq_forward_pe": pe_metric.get("forward_pe"),
                     "nasdaq_pe_quotes": pe_metric.get("quotes", {}),
                     "qqqm_monthly_close": trend["monthly_close"],
@@ -296,6 +302,9 @@ def us_index_decisions() -> list[Decision]:
                     if pe_metric.get("source") == "last_valid_trailingPE"
                     else f"{pe_metric['symbol']} trailingPE"
                 )
+                if pe_metric.get("source") in {"invesco", "last_valid_official_pe"}:
+                    prefix = "上次有效" if pe_metric["source"] == "last_valid_official_pe" else ""
+                    pe_source_note = f"{prefix}Invesco QQQ 官方PE，披露日 {pe_metric['as_of']}"
                 reason = (
                     f"{now.month} 月为{month_type}月，本月目标资产为 QQQM；"
                     f"纳指 PE {pe:.1f}（{pe_label}，来源：{pe_source_note}），QQQM {trend_note}，买入系数 {multiplier:g}x。"
