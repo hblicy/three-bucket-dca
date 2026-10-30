@@ -358,8 +358,9 @@ def _read_last_valid_trailing_pe() -> dict | None:
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(data, dict) or (
-        data.get("field") not in {"trailingPE", "priceToEarningsRatio"}
-        or data.get("symbol") not in {"QQQ", "QQQM", "^NDX"}
+        data.get("field") != "priceToEarningsRatio"
+        or data.get("symbol") != "QQQ"
+        or data.get("source") != "invesco"
     ):
         return None
     pe = _positive_real(data.get("pe"))
@@ -374,18 +375,15 @@ def _read_last_valid_trailing_pe() -> dict | None:
     age = _utc_now() - cached_at.astimezone(timezone.utc)
     if age < timedelta(0) or age > NASDAQ_PE_CACHE_MAX_AGE:
         return None
-    if data.get("field") == "priceToEarningsRatio":
-        try:
-            _validate_invesco_pe_date(data.get("as_of"))
-        except ValueError:
-            return None
-        if data.get("source") != "invesco" or data.get("symbol") != "QQQ":
-            return None
+    try:
+        _validate_invesco_pe_date(data.get("as_of"))
+    except ValueError:
+        return None
     return {
         "symbol": data.get("symbol") or "unknown",
         "pe": pe,
         "field": data["field"],
-        "source": "last_valid_official_pe" if data["field"] == "priceToEarningsRatio" else "last_valid_trailingPE",
+        "source": "last_valid_official_pe",
         "as_of": data.get("as_of"),
         "source_url": data.get("source_url"),
         "cached_at": data["updated_at"],
