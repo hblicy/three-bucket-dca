@@ -25,6 +25,53 @@ nav a { color: var(--muted); text-decoration: none; padding: 10px 12px; border-r
 nav a:hover, nav a.active { background: var(--panel); color: var(--text); }
 main { padding: 26px 32px 60px; }
 header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
+
+.dashboard-header-actions { display: flex; align-items: center; gap: 10px; max-width: 100%; }
+.dashboard-header-actions button { flex: none; min-height: 39px; white-space: nowrap; }
+.fear-greed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 67px;
+  padding: 3px 9px 2px 13px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.fear-greed a { color: var(--muted); text-decoration: none; font-size: 13px; white-space: nowrap; }
+.fear-greed a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.fear-greed-dial { position: relative; width: 104px; height: 60px; flex: none; font-variant-numeric: tabular-nums; }
+.fear-greed-arc { position: absolute; width: 92px; height: 46px; top: 2px; left: 6px; overflow: hidden; }
+.fear-greed-arc::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  background: conic-gradient(from -90deg,
+    #ff656b 0deg 34deg, transparent 34deg 38deg,
+    #ff9d42 38deg 70deg, transparent 70deg 74deg,
+    #f2cc60 74deg 106deg, transparent 106deg 110deg,
+    #a3d655 110deg 142deg, transparent 142deg 146deg,
+    #35d07f 146deg 180deg, transparent 180deg);
+  mask-image: radial-gradient(farthest-side, transparent calc(100% - 4.5px), black calc(100% - 4px));
+}
+.fear-greed-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #f7faff;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+.fear-greed-reading { display: grid; position: absolute; inset: 19px 0 auto; gap: 2px; text-align: center; }
+.fear-greed-reading strong { color: var(--text); font-size: 25px; line-height: 1; }
+.fear-greed-reading small { color: var(--muted); font-size: 10px; line-height: 12px; }
+.fear-greed-reading.fear small { color: #ff9297; }
+.fear-greed-reading.neutral small { color: var(--yellow); }
+.fear-greed-reading.greed small { color: var(--green); }
 h1, h2, h3, p { margin: 0; }
 h1 { font-size: 30px; }
 p { color: var(--muted); margin-top: 8px; }
@@ -39,7 +86,19 @@ p { color: var(--muted); margin-top: 8px; }
 }
 .card .name { color: var(--muted); font-size: 12px; }
 .card strong { display: block; margin-top: 8px; font-size: 26px; }
-.decision { display: grid; gap: 10px; }
+.decision { display: flex; flex-direction: column; gap: 10px; }
+@media (min-width: 981px) {
+  @supports (grid-template-rows: subgrid) {
+    #decisions { row-gap: 10px; }
+    #decisions .decision {
+      display: grid;
+      grid-row: span 7;
+      grid-template-rows: subgrid;
+      align-items: start;
+    }
+    .decision .decision-window { grid-row: 7; }
+  }
+}
 .decision-reason { overflow-wrap: anywhere; }
 .btc-reference { font-size: 14px; line-height: 1.6; }
 .btc-reference strong { white-space: nowrap; }

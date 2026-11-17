@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from dca_tracker import cache, portfolio
+from dca_tracker import cache, fear_greed, portfolio
 from dca_tracker.config import HOST, PORT, READ_TOKEN, ROOT, WEWORK_BOT_WEBHOOK, WRITE_TOKEN
 from dca_tracker.db import backup_db, connect, init_db, rows_to_dicts, write_lock
 from dca_tracker.migration import migrate_all
@@ -142,11 +142,11 @@ def dashboard(x_dca_read_token: str | None = Header(default=None), refresh: bool
             cache.DASHBOARD_KEY, max_age=cache.DASHBOARD_CACHE_MAX_AGE
         )
         if cached:
-            return cached
+            return {**cached, "fear_greed": fear_greed.snapshot()}
     data = cache.build_dashboard()
     cache.set_cache(cache.DASHBOARD_KEY, data)
     data["cache"] = {"key": cache.DASHBOARD_KEY, "hit": False}
-    return data
+    return {**data, "fear_greed": fear_greed.snapshot()}
 
 
 @app.get("/api/performance")

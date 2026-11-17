@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>三仓定投计划</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261019-2">
+  <link rel="stylesheet" href="/static/style.css?v=20261117-1">
 </head>
 <body>
 <div class="layout">
@@ -21,7 +21,15 @@
   <main>
     <header>
       <div><h1>三仓定投计划</h1><p>BTC、CRCL、QQQM + VOO 的统一定投驾驶舱。</p></div>
-      <button onclick="load(true)">刷新</button>
+      <div class="dashboard-header-actions">
+        <div class="fear-greed">
+          <a href="https://alternative.me/crypto/fear-and-greed-index/" target="_blank" rel="noopener noreferrer" title="来源：Alternative.me">恐惧贪婪指数</a>
+          <div class="fear-greed-dial" id="fear-greed-dial" aria-live="polite">
+            <span class="fear-greed-reading"><strong>—</strong><small>暂无数据</small></span>
+          </div>
+        </div>
+        <button onclick="load(true)">刷新</button>
+      </div>
     </header>
     <section class="panel warning" id="errors" hidden></section>
     <section class="grid" id="summary"></section>
@@ -61,8 +69,8 @@
     </section>
   </main>
 </div>
-<script src="/static/common.js?v=20261019-2"></script>
-<script src="/static/performance-chart.js?v=20261019-2"></script>
+<script src="/static/common.js?v=20261117-1"></script>
+<script src="/static/performance-chart.js?v=20261117-1"></script>
 <script>
 const colorClass = (n) => n === null || n === undefined ? "yellow" : Number(n) >= 0 ? "green" : "red";
 let activePerformanceScope = "all";
@@ -87,8 +95,33 @@ function renderDecisionPrice(decision) {
   return `<div class="muted">价格：${fmt(decision.price)} USDT</div>`;
 }
 
+
+function renderFearGreed(reading) {
+  const dial = $("fear-greed-dial");
+  const value = reading?.value;
+  if (!Number.isInteger(value) || value < 0 || value > 100) {
+    dial.innerHTML = '<span class="fear-greed-reading"><strong>—</strong><small>暂无数据</small></span>';
+    return;
+  }
+
+  const label = value < 20 ? "极度恐惧" : value < 40 ? "恐惧" : value < 60 ? "中性" : value <= 80 ? "贪婪" : "极度贪婪";
+  const tone = value < 40 ? "fear" : value < 60 ? "neutral" : "greed";
+  const angle = Math.PI * value / 100;
+  const markerX = 52 - 44 * Math.cos(angle);
+  const markerY = 48 - 44 * Math.sin(angle);
+  const status = reading.stale ? "上次 · " + label : label;
+  dial.innerHTML = `
+    <span class="fear-greed-arc" aria-hidden="true"></span>
+    <span class="fear-greed-marker" aria-hidden="true" style="left:${markerX}px;top:${markerY}px"></span>
+    <span class="fear-greed-reading ${tone}" title="Alternative.me · ${text(reading.as_of)} UTC">
+      <strong>${value}</strong><small>${status}</small>
+    </span>
+  `;
+}
+
 async function load(refresh = false) {
   const data = await api(`/api/dashboard${refresh ? "?refresh=true" : ""}`);
+  renderFearGreed(data.fear_greed);
   $("errors").hidden = !data.has_errors;
   $("errors").innerHTML = data.has_errors ? `<h2>数据获取异常</h2><p>${text(data.errors.map(e => `${e.asset}: ${e.message}`).join("；"))}</p>` : "";
   const priceWarning = data.portfolio.price_data_ok ? "" : `<div class="card"><div class="name">缺失价格</div><strong class="yellow">${text(data.portfolio.missing_price_assets.join(", "))}</strong></div>`;
@@ -107,7 +140,7 @@ async function load(refresh = false) {
       <div>建议金额：<strong>${money(d.recommended_amount)}</strong></div>
       <div class="muted decision-reason">${text(d.reason)}</div>
       ${d.asset === "BTC" ? renderStrategyBtcCost(data.strategy_btc) : ""}
-      <div class="muted">${text(d.next_window)}</div>
+      <div class="muted decision-window">${text(d.next_window)}</div>
     </div>
   `).join("");
   $("buckets").innerHTML = data.portfolio.buckets.map(x => `

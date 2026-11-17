@@ -8,9 +8,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
+from dca_tracker import fear_greed
 from dca_tracker.db import backup_db, init_db, write_lock
 from dca_tracker.migration import migrate_all
-from dca_tracker.notify import send_due_reminders
+from dca_tracker.notify import send_due_reminders, send_wework_text
 from dca_tracker.cache import refresh_all
 
 
@@ -22,5 +23,6 @@ if __name__ == "__main__":
             if backup:
                 print(f"backup: {backup}")
             print("migration:", migrate_all())
+    print("fear_greed:", fear_greed.poll(send_wework_text))
     print("cache:", refresh_all())
     print("reminders:", send_due_reminders())
