@@ -146,7 +146,6 @@ p { color: var(--muted); margin-top: 8px; }
 .grid-line.vertical { stroke: rgba(147,167,189,.11); }
 .axis-zero { stroke: rgba(147,167,189,.28); stroke-width: 1; }
 .axis-label { fill: var(--muted); font-size: 12px; }
-.axis-label.endpoint { fill: #b7d8ff; font-size: 13px; }
 .value-area { fill: url(#valueFill); }
 .value-line { fill: none; stroke: var(--green); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 .cost-line { fill: none; stroke: #ff5f57; stroke-width: 2.1; stroke-dasharray: 5 7; stroke-linecap: round; stroke-linejoin: round; }
