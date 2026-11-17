@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>三仓定投计划</title>
-  <link rel="stylesheet" href="/static/style.css?v=20261117-1">
+  <link rel="stylesheet" href="/static/style.css?v=20261117-2">
 </head>
 <body>
 <div class="layout">
@@ -69,8 +69,8 @@
     </section>
   </main>
 </div>
-<script src="/static/common.js?v=20261117-1"></script>
-<script src="/static/performance-chart.js?v=20261117-1"></script>
+<script src="/static/common.js?v=20261117-2"></script>
+<script src="/static/performance-chart.js?v=20261117-2"></script>
 <script>
 const colorClass = (n) => n === null || n === undefined ? "yellow" : Number(n) >= 0 ? "green" : "red";
 let activePerformanceScope = "all";
@@ -221,15 +221,13 @@ function drawPerformanceChart(series) {
     grid.push(`<text x="10" y="${gy + 4}" class="axis-label">${money(val)}</text>`);
   }
   const xGrid = [];
-  const tickCount = Math.min(8, Math.max(2, Math.floor(points.length / 18)));
+  const tickCount = Math.min(points.length - 1, 8, Math.max(2, Math.floor(points.length / 18)));
   for (let i = 0; i <= tickCount; i++) {
     const idx = Math.round(i * (points.length - 1) / tickCount);
     const tx = x(idx);
     xGrid.push(`<line x1="${tx}" x2="${tx}" y1="${pad.top}" y2="${h - pad.bottom}" class="grid-line vertical"></line>`);
     xGrid.push(`<text x="${tx - 16}" y="${h - 14}" class="axis-label">${points[idx].date.slice(5)}</text>`);
   }
-  const first = points[0].date.slice(5);
-  const last = points[points.length - 1].date.slice(5);
   svg.innerHTML = `
     <defs>
       <linearGradient id="valueFill" x1="0" y1="0" x2="0" y2="1">
@@ -249,8 +247,6 @@ function drawPerformanceChart(series) {
     <path d="${smoothPath(costCoords)}" class="cost-line"></path>
     <path d="${smoothPath(valueCoords)}" class="value-line" filter="url(#softGlow)"></path>
     <circle cx="${x(points.length - 1)}" cy="${y(Number(points[points.length - 1].value))}" r="4" class="last-dot"></circle>
-    <text x="${pad.left}" y="${h - 28}" class="axis-label endpoint">${first}</text>
-    <text x="${w - pad.right - 42}" y="${h - 28}" class="axis-label endpoint">${last}</text>
     <g class="chart-hover" hidden>
       <line class="chart-hover-line" y1="${pad.top}" y2="${h - pad.bottom}"></line>
       <circle class="chart-hover-dot value-dot" r="4"></circle>
