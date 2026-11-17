@@ -11,10 +11,18 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from dca_tracker import prices, rules
-from dca_tracker.notify import is_us_index_signal_due
+from dca_tracker.notify import is_due, is_us_index_signal_due
 
 
 class UsIndexStrategyTest(unittest.TestCase):
+    month_ends_2024 = (
+        "2024-01-31", "2024-02-29", "2024-03-28", "2024-04-30", "2024-05-31",
+        "2024-06-28", "2024-07-31", "2024-08-30", "2024-09-30", "2024-10-31", "2024-11-29",
+    )
+
+    def confirmed_month_data(self):
+        return pd.DataFrame({"Close": [100.0] * 10 + [90.0]}, index=pd.to_datetime(self.month_ends_2024))
+
     def setUp(self):
         source = patch.object(prices, "equity_quote", side_effect=lambda symbol: {"price": 100.0, "symbol": symbol, "source": "Binance Stocks", "quote_asset": "USD", "updated_at": "2026-10-26T09:00:00+00:00", "price_at": "2026-10-26T09:00:00+00:00", "session": "O"}, create=True)
         source.start()
@@ -50,11 +58,81 @@ class UsIndexStrategyTest(unittest.TestCase):
         self.assertEqual(decision.metrics["multiplier"], 2.0)
 
     def test_close_equal_ma10m_is_not_below_trend(self):
-        index = pd.date_range("2025-01-31", periods=12, freq="M")
-        data = pd.DataFrame({"Close": [100.0] * len(index)}, index=index)
-        with patch.object(prices, "history", return_value=data):
+        data = self.confirmed_month_data().assign(Close=100.0)
+        now = datetime(2024, 12, 2, 8, tzinfo=timezone.utc)
+        with patch.object(prices, "history", return_value=data), patch.object(prices, "_utc_now", return_value=now):
             trend = prices.monthly_trend("QQQM")
         self.assertFalse(trend["below_ma10m"])
+
+    def test_month_end_uses_new_york_early_close(self):
+        data = self.confirmed_month_data()
+        for hour, minute, expected in ((17, 59, 100.0), (18, 0, 90.0)):
+            with (
+                self.subTest(hour=hour, minute=minute),
+                patch.object(prices, "history", return_value=data),
+                patch.object(prices, "_utc_now", return_value=datetime(2024, 11, 29, hour, minute, tzinfo=timezone.utc)),
+            ):
+                trend = prices.monthly_trend("QQQM")
+                self.assertEqual(trend["monthly_close"], expected)
+                self.assertEqual(trend["ma10m"], 99.0 if expected == 90.0 else 100.0)
+
+    def test_open_month_data_does_not_change_signal(self):
+        data = self.confirmed_month_data()
+        data.loc[pd.Timestamp("2024-12-12"), "Close"] = 120.0
+        now = datetime(2024, 12, 13, 1, tzinfo=timezone.utc)
+        with patch.object(prices, "history", return_value=data), patch.object(prices, "_utc_now", return_value=now):
+            trend = prices.monthly_trend("QQQM")
+        self.assertEqual(trend["monthly_close"], 90.0)
+        self.assertEqual(trend["ma10m"], 99.0)
+        self.assertTrue(trend["below_ma10m"])
+
+    def test_qqqm_reminder_waits_for_month_end_close(self):
+        now = datetime(2024, 12, 2, 16, tzinfo=ZoneInfo("Asia/Shanghai"))
+        data = self.confirmed_month_data().rename(index={pd.Timestamp("2024-11-29"): pd.Timestamp("2024-11-27")})
+        with (
+            patch.object(rules, "_now", return_value=now),
+            patch.object(prices, "_utc_now", return_value=now.astimezone(timezone.utc)),
+            patch.object(prices, "history", return_value=data),
+            patch.object(prices, "nasdaq_pe", return_value={"pe": 30.0, "symbol": "QQQ", "field": "trailingPE"}),
+        ):
+            with self.assertLogs("dca_tracker.rules", level="ERROR"):
+                decision = rules.us_index_decisions()[0]
+            data.loc[pd.Timestamp("2024-11-29"), "Close"] = 90.0
+            recovered = rules.us_index_decisions()[0]
+        self.assertEqual(decision.asset, "QQQM")
+        self.assertFalse(decision.data_ok)
+        self.assertIn("2024-11-29", decision.reason)
+        self.assertFalse(is_due(decision, now))
+        self.assertEqual(recovered.recommended_amount, 250.0)
+        self.assertTrue(is_due(recovered, now))
+
+    def test_quote_filled_month_end_is_not_confirmed_close(self):
+        data = self.confirmed_month_data()
+        data.loc[pd.Timestamp("2024-11-29"), "Close"] = float("nan")
+        quote = {"symbol": "QQQM", "price": 90.0,
+                 "timestamp": datetime(2024, 11, 29, 17, 59, tzinfo=timezone.utc).timestamp()}
+        now = datetime(2024, 12, 2, 8, tzinfo=timezone.utc)
+        with (
+            patch.dict(prices._HISTORY_CACHE, clear=True),
+            patch.object(prices, "_utc_now", return_value=now),
+            patch.object(prices, "_fetch_fmp_history", return_value=data),
+            patch.object(prices, "fmp_request", return_value=[quote]),
+        ):
+            self.assertEqual(prices.history("QQQM").iloc[-1]["Close"], 90.0)
+            with self.assertRaisesRegex(RuntimeError, "2024-11-29"):
+                prices.monthly_trend("QQQM")
+
+    def test_december_31_trades_when_new_years_day_is_saturday(self):
+        data = pd.DataFrame({"Close": [100.0] * 9 + [110.0]})
+        data.index = pd.to_datetime([
+            "2027-03-31", "2027-04-30", "2027-05-28", "2027-06-30", "2027-07-30",
+            "2027-08-31", "2027-09-30", "2027-10-29", "2027-11-30", "2027-12-31",
+        ])
+        now = datetime(2028, 1, 3, 8, tzinfo=timezone.utc)
+        with patch.object(prices, "history", return_value=data), patch.object(prices, "_utc_now", return_value=now):
+            trend = prices.monthly_trend("QQQM")
+        self.assertEqual(trend["monthly_close"], 110.0)
+        self.assertEqual(trend["ma10m"], 101.0)
 
     def test_voo_invalid_close_produces_no_formal_advice(self):
         now = datetime(2026, 9, 15, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai"))

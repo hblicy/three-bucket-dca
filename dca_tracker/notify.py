@@ -3,101 +3,23 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .config import BEIJING_TZ, WEWORK_BOT_WEBHOOK
 from .db import connect, write_lock
 from .rules import Decision, btc_decision, crcl_decision, us_index_decisions
+from .us_market_calendar import last_us_trading_day, next_us_trading_day, previous_month
 
 
 def _today() -> datetime:
     return datetime.now(ZoneInfo(BEIJING_TZ))
 
 
-def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
-    day = date(year, month, 1)
-    offset = (weekday - day.weekday()) % 7
-    return day + timedelta(days=offset + 7 * (n - 1))
-
-
-def _last_weekday(year: int, month: int, weekday: int) -> date:
-    day = date(year, month + 1, 1) - timedelta(days=1) if month < 12 else date(year, 12, 31)
-    return day - timedelta(days=(day.weekday() - weekday) % 7)
-
-
-def _observed_fixed_holiday(year: int, month: int, day: int) -> date:
-    raw = date(year, month, day)
-    if raw.weekday() == 5:
-        return raw - timedelta(days=1)
-    if raw.weekday() == 6:
-        return raw + timedelta(days=1)
-    return raw
-
-
-def _easter_date(year: int) -> date:
-    a = year % 19
-    b = year // 100
-    c = year % 100
-    d = b // 4
-    e = b % 4
-    f = (b + 8) // 25
-    g = (b - f + 1) // 3
-    h = (19 * a + b - d - g + 15) % 30
-    i = c // 4
-    k = c % 4
-    l = (32 + 2 * e + 2 * i - h - k) % 7
-    m = (a + 11 * h + 22 * l) // 451
-    month = (h + l - 7 * m + 114) // 31
-    day = ((h + l - 7 * m + 114) % 31) + 1
-    return date(year, month, day)
-
-
-def _us_market_holidays(year: int) -> set[date]:
-    holidays = {
-        _observed_fixed_holiday(year, 1, 1),
-        _nth_weekday(year, 1, 0, 3),
-        _nth_weekday(year, 2, 0, 3),
-        _easter_date(year) - timedelta(days=2),
-        _last_weekday(year, 5, 0),
-        _observed_fixed_holiday(year, 6, 19),
-        _observed_fixed_holiday(year, 7, 4),
-        _nth_weekday(year, 9, 0, 1),
-        _nth_weekday(year, 11, 3, 4),
-        _observed_fixed_holiday(year, 12, 25),
-    }
-    holidays.add(_observed_fixed_holiday(year + 1, 1, 1))
-    return holidays
-
-
-def _is_us_trading_day(day: date) -> bool:
-    return day.weekday() < 5 and day not in _us_market_holidays(day.year)
-
-
-def _last_us_trading_day(year: int, month: int) -> date:
-    day = date(year, month + 1, 1) - timedelta(days=1) if month < 12 else date(year, 12, 31)
-    while not _is_us_trading_day(day):
-        day -= timedelta(days=1)
-    return day
-
-
-def _next_us_trading_day(day: date) -> date:
-    day += timedelta(days=1)
-    while not _is_us_trading_day(day):
-        day += timedelta(days=1)
-    return day
-
-
-def _previous_month(day: date) -> tuple[int, int]:
-    if day.month == 1:
-        return day.year - 1, 12
-    return day.year, day.month - 1
-
-
 def is_us_index_signal_due(now: datetime | None = None) -> bool:
     now = now or _today()
-    year, month = _previous_month(now.date())
-    signal_day = _next_us_trading_day(_last_us_trading_day(year, month))
+    year, month = previous_month(now.date())
+    signal_day = next_us_trading_day(last_us_trading_day(year, month))
     return now.date() == signal_day and now.hour == 16
 
 

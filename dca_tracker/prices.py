@@ -14,6 +14,7 @@ import pandas as pd
 import requests
 
 from .config import ROOT, FMP_API_KEY
+from .us_market_calendar import last_completed_us_month_end, last_us_trading_day
 
 
 _HISTORY_LOCK = threading.Lock()
@@ -190,6 +191,7 @@ def _fill_missing_latest_equity_close(data: pd.DataFrame, symbol: str) -> pd.Dat
     _validate_latest_price_date(data.index[-1], symbol, US_EQUITY_PRICE_MAX_AGE)
     repaired = data.copy()
     repaired.iloc[-1, repaired.columns.get_loc("Close")] = price
+    repaired.attrs["fmp_quote_close_date"] = latest_date
     logging.getLogger(__name__).warning(
         "Filled missing Close for %s on %s from FMP quote price=%s at %s",
         symbol, latest_date.isoformat(), price, quote_time.isoformat(),
@@ -447,19 +449,28 @@ def nasdaq_pe() -> dict:
 
 
 def monthly_trend(symbol: str, months: int = 10) -> dict:
+    now = _utc_now()
+    month_end = last_completed_us_month_end(now)
     data = history(symbol, period="5y")
     close = _validated_close(data, symbol)
-    monthly_close = close.resample("M").last().dropna()
-    if len(monthly_close) < months:
-        raise RuntimeError(f"Not enough monthly history for {symbol}")
+    if "fmp_quote_close_date" in data.attrs:
+        close = close.drop(pd.Timestamp(data.attrs["fmp_quote_close_date"]), errors="ignore")
+    expected = pd.DatetimeIndex([
+        last_us_trading_day(period.year, period.month)
+        for period in pd.period_range(end=month_end, periods=months, freq="M")
+    ])
+    monthly_close = close.reindex(expected)
+    missing = monthly_close[monthly_close.isna()]
+    if not missing.empty:
+        raise RuntimeError(f"{symbol} 缺少已确认的月末收盘价：{missing.index[-1]:%Y-%m-%d}")
     latest_month_close = float(monthly_close.iloc[-1])
-    ma = float(monthly_close.tail(months).mean())
+    ma = float(monthly_close.mean())
     return {
         "monthly_close": latest_month_close,
         "ma10m": ma,
         "below_ma10m": latest_month_close < ma,
         "ma10m_distance_pct": (latest_month_close / ma - 1.0) * 100 if ma else 0.0,
-        "updated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "updated_at": now.isoformat(timespec="seconds").replace("+00:00", "Z"),
     }
 
 
